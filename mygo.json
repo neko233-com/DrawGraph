@@ -15,7 +15,8 @@
   "fileAssociations": [
     {
       "name": "DrawGraph Diagram",
-      "extensions": ["drawgraph"]
+      "ext": ["drawgraph", "drawio"],
+      "role": "Editor"
     }
   ]
 }

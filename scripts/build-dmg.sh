@@ -37,12 +37,13 @@ if [[ -z "$APP_BUNDLE" || ! -d "$APP_BUNDLE" ]]; then
 fi
 
 echo "Embedding drawgraph Agent CLI (darwin/arm64) inside app bundle..."
-mkdir -p "$APP_BUNDLE/Contents/Resources/bin"
+mkdir -p "$APP_BUNDLE/Contents/Helpers"
 GOOS=darwin GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" \
-  -o "$APP_BUNDLE/Contents/Resources/bin/drawgraph" ./cmd/drawgraph
+  -o "$APP_BUNDLE/Contents/Helpers/drawgraph" ./cmd/drawgraph
 
-# Re-sign bundle ad-hoc after adding drawgraph CLI binary so Gatekeeper local checks remain consistent.
+# Re-sign CLI helper and bundle ad-hoc so Gatekeeper local checks remain consistent.
 if command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "$APP_BUNDLE/Contents/Helpers/drawgraph" || true
   codesign --force --deep --sign - "$APP_BUNDLE" || true
 fi
 
