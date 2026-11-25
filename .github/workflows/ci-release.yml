@@ -1,0 +1,92 @@
+name: CI & Release (Windows x64 MSI + macOS arm64 DMG)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.1.0)"
+        required: false
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  test-windows-amd64:
+    runs-on: windows-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+      - name: Vet & Test (Windows amd64)
+        shell: pwsh
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+      - name: Install WiX 5
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build Windows x64 MSI
+        shell: pwsh
+        run: |
+          $ver = "${{ github.event.inputs.version || github.ref_name }}" -replace '^v', ''
+          if ($ver -notmatch '^\d+\.\d+\.\d+') { $ver = "0.1.0" }
+          powershell -ExecutionPolicy Bypass -File scripts\build-msi.ps1 -Version $ver
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64-msi
+          path: |
+            dist/DrawGraph-windows-amd64.msi
+            dist/DrawGraph-windows-amd64.msi.sha256
+
+  test-macos-arm64:
+    runs-on: macos-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+      - name: Vet & Test (macOS arm64)
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+      - name: Build macOS arm64 DMG
+        run: |
+          VER="${{ github.event.inputs.version || github.ref_name }}"
+          VER="${VER#v}"
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then VER="0.1.0"; fi
+          chmod +x scripts/build-dmg.sh
+          ./scripts/build-dmg.sh "$VER"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-dmg
+          path: |
+            dist/DrawGraph-darwin-arm64.dmg
+            dist/DrawGraph-darwin-arm64.dmg.sha256
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test-windows-amd64, test-macos-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/DrawGraph-windows-amd64.msi
+            artifacts/DrawGraph-windows-amd64.msi.sha256
+            artifacts/DrawGraph-darwin-arm64.dmg
+            artifacts/DrawGraph-darwin-arm64.dmg.sha256

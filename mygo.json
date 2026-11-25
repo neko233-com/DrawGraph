@@ -1,0 +1,21 @@
+{
+  "name": "DrawGraph",
+  "slug": "drawgraph",
+  "identifier": "com.neko233.drawgraph",
+  "version": "0.1.0",
+  "copyright": "Copyright © 2026 neko233-com",
+  "publisher": "neko233-com",
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "main": "./cmd/drawgraph-gui",
+  "out": "dist",
+  "macos": {
+    "dmgTitle": "DrawGraph"
+  },
+  "fileAssociations": [
+    {
+      "name": "DrawGraph Diagram",
+      "extensions": ["drawgraph"]
+    }
+  ]
+}

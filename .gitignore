@@ -1,0 +1,25 @@
+# Binaries & build outputs
+/build/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.app/
+*.dmg
+*.msi
+*.wixobj
+*.wixpdb
+*.syso
+!cmd/drawgraph-gui/*.syso
+
+# Go
+/coverage.out
+*.test
+
+# OS & editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+tmp/

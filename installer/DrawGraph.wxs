@@ -1,0 +1,71 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="DrawGraph"
+           Manufacturer="neko233-com"
+           Version="$(var.Version)"
+           UpgradeCode="{E7C94A8B-5D4F-4E9B-8C21-38D6B2A149E2}"
+           Scope="perMachine">
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of DrawGraph is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="DrawGraph.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="DrawGraph.ico" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/neko233-com/DrawGraph" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DrawGraph" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="DrawGraph" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="DrawGraphGUI" Guid="{14C92B8E-3A1C-44A6-806F-62E8A29C8E41}">
+        <File Id="DrawGraphGuiExe" Name="drawgraph-gui.exe" Source="$(var.PayloadDir)\drawgraph-gui.exe" KeyPath="yes" />
+        <ProgId Id="DrawGraph.Document" Description="DrawGraph Diagram">
+          <Extension Id="drawgraph" ContentType="application/vnd.drawgraph+json">
+            <Verb Id="open" Command="Open" TargetFile="DrawGraphGuiExe" Argument="&quot;%1&quot;" />
+          </Extension>
+        </ProgId>
+      </Component>
+
+      <Component Id="DrawGraphCLI" Guid="{52F1A7B3-94E2-4D95-B471-8A4C95F11B1D}">
+        <File Id="DrawGraphCliExe" Name="drawgraph.exe" Source="$(var.PayloadDir)\drawgraph.exe" KeyPath="yes" />
+        <Environment Id="DrawGraphPath"
+                     Name="PATH"
+                     Value="[INSTALLFOLDER]"
+                     Permanent="no"
+                     Part="last"
+                     Action="set"
+                     System="yes" />
+      </Component>
+
+      <Component Id="DrawGraphIcon" Guid="{A93E6C18-7F20-4B18-8E39-D4B552F9A014}">
+        <File Id="DrawGraphIcoFile" Name="drawgraph.ico" Source="$(var.IconFile)" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="ShortcutComponents" Directory="ApplicationProgramsFolder">
+      <Component Id="StartMenuShortcut" Guid="{912A0C44-7605-48E9-A1E2-0B803A64C12F}">
+        <Shortcut Id="DrawGraphStartMenuShortcut"
+                  Name="DrawGraph"
+                  Description="Native GPU Diagramming Workbench"
+                  Target="[INSTALLFOLDER]drawgraph-gui.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="DrawGraph.ico" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\neko233-com\DrawGraph"
+                       Name="StartMenuShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="MainFeature" Title="DrawGraph" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="ShortcutComponents" />
+    </Feature>
+  </Package>
+</Wix>

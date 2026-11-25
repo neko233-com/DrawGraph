@@ -1,0 +1,338 @@
+// Package export renders DrawGraph documents to standalone PNG and SVG files
+// without requiring a desktop window.
+package export
+
+import (
+	"bytes"
+	"fmt"
+	"html"
+	"image/png"
+	"math"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/egoist/mygo/ui"
+
+	"github.com/neko233-com/DrawGraph/internal/geo"
+	"github.com/neko233-com/DrawGraph/internal/graph"
+	"github.com/neko233-com/DrawGraph/internal/icons"
+	"github.com/neko233-com/DrawGraph/internal/render"
+)
+
+// RenderPNG renders the specified page (or ActivePage when pageID == "") to PNG bytes.
+func RenderPNG(doc *graph.Document, pageID string, reg *icons.Registry, dark bool, scale float64) ([]byte, error) {
+	if doc == nil {
+		return nil, fmt.Errorf("nil document")
+	}
+	if scale <= 0 {
+		scale = 2
+	}
+	page := doc.ActivePage()
+	if pageID != "" {
+		if found := doc.PageByID(pageID); found != nil {
+			page = found
+		} else {
+			return nil, fmt.Errorf("page %q not found", pageID)
+		}
+	}
+	box, ok := page.Bounds()
+	if !ok {
+		box = geo.B(0, 0, 640, 400)
+	} else {
+		box = box.Expand(48)
+	}
+	w := max(int(math.Ceil(box.W)), 160)
+	h := max(int(math.Ceil(box.H)), 120)
+
+	const maxSide = 4096.0
+	if m := max(float64(w), float64(h)) * scale; m > maxSide {
+		scale = maxSide / max(float64(w), float64(h))
+	}
+
+	img := ui.Render(func(c *ui.Context) {
+		ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
+			render.PaintScene(p, r, render.SceneState{
+				Doc:    doc,
+				Page:   page,
+				Icons:  reg,
+				Cam:    render.Camera{X: -box.X, Y: -box.Y, Zoom: 1},
+				Dark:   dark,
+				Export: true,
+			})
+		})
+	}, w, h, float32(scale))
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// RenderSVG renders the specified page (or ActivePage when pageID == "") as clean standalone SVG,
+// embedding any custom or Git-installed icon SVGs directly as nested <svg> elements.
+func RenderSVG(doc *graph.Document, pageID string, reg *icons.Registry, dark bool) ([]byte, error) {
+	if doc == nil {
+		return nil, fmt.Errorf("nil document")
+	}
+	page := doc.ActivePage()
+	if pageID != "" {
+		if found := doc.PageByID(pageID); found != nil {
+			page = found
+		} else {
+			return nil, fmt.Errorf("page %q not found", pageID)
+		}
+	}
+	box, ok := page.Bounds()
+	if !ok {
+		box = geo.B(0, 0, 640, 400)
+	} else {
+		box = box.Expand(48)
+	}
+
+	bg := "#F8FAFC"
+	defaultFill := "#FFFFFF"
+	defaultStroke := "#CBD5E1"
+	defaultText := "#0F172A"
+	defaultEdge := "#64748B"
+	if dark {
+		bg = "#0B1120"
+		defaultFill = "#1E293B"
+		defaultStroke = "#475569"
+		defaultText = "#F8FAFC"
+		defaultEdge = "#94A3B8"
+	}
+	if page.Background != "" {
+		bg = page.Background
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="%.2f %.2f %.2f %.2f">`+"\n",
+		box.W, box.H, box.X, box.Y, box.W, box.H)
+	b.WriteString(`<defs>` + "\n")
+	fmt.Fprintf(&b, `  <marker id="dg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="%s"/></marker>`+"\n", defaultEdge)
+	b.WriteString(`  <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}</style>` + "\n")
+	b.WriteString(`</defs>` + "\n")
+	fmt.Fprintf(&b, `<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s"/>`+"\n", box.X, box.Y, box.W, box.H, html.EscapeString(bg))
+
+	sorted := page.SortedNodes()
+	for _, n := range sorted {
+		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
+			writeSVGNode(&b, n, reg, defaultFill, defaultStroke, defaultText, dark)
+		}
+	}
+	for _, e := range page.Edges {
+		writeSVGEdge(&b, page, e, defaultEdge, bg, defaultText)
+	}
+	for _, n := range sorted {
+		if n.Kind != graph.KindContainer && n.Kind != graph.KindSwimlane {
+			writeSVGNode(&b, n, reg, defaultFill, defaultStroke, defaultText, dark)
+		}
+	}
+
+	b.WriteString("</svg>\n")
+	return []byte(b.String()), nil
+}
+
+// ExportFile writes PNG, SVG, or draw.io XML inferred from the target path extension.
+func ExportFile(outPath string, doc *graph.Document, pageID string, reg *icons.Registry, dark bool, scale float64) error {
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return err
+	}
+	ext := strings.ToLower(filepath.Ext(outPath))
+	switch ext {
+	case ".png":
+		data, err := RenderPNG(doc, pageID, reg, dark, scale)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(outPath, data, 0o644)
+	case ".svg":
+		data, err := RenderSVG(doc, pageID, reg, dark)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(outPath, data, 0o644)
+	default:
+		return fmt.Errorf("unsupported export extension %q (expected .png or .svg)", ext)
+	}
+}
+
+func writeSVGNode(b *strings.Builder, n *graph.Node, reg *icons.Registry, defFill, defStroke, defText string, dark bool) {
+	fill := firstStr(n.Style.Fill, defFill)
+	if dark && strings.EqualFold(fill, "#FFFFFF") {
+		fill = defFill
+	}
+	stroke := firstStr(n.Style.Stroke, defStroke)
+	textCol := firstStr(n.Style.TextColor, defText)
+	if dark && strings.EqualFold(textCol, "#0F172A") {
+		textCol = defText
+	}
+	sw := n.Style.StrokeWidth
+	if sw <= 0 {
+		sw = 1.5
+	}
+	dashAttr := ""
+	if n.Style.Dash == graph.DashDashed {
+		dashAttr = ` stroke-dasharray="6,4"`
+	} else if n.Style.Dash == graph.DashDotted {
+		dashAttr = ` stroke-dasharray="2,4"`
+	}
+
+	switch n.Kind {
+	case graph.KindText:
+	case graph.KindEllipse:
+		fmt.Fprintf(b, `<ellipse cx="%.2f" cy="%.2f" rx="%.2f" ry="%.2f" fill="%s" stroke="%s" stroke-width="%.2f"%s/>`+"\n",
+			n.X+n.W/2, n.Y+n.H/2, n.W/2, n.H/2, esc(fill), esc(stroke), sw, dashAttr)
+	case graph.KindDiamond:
+		cx, cy := n.X+n.W/2, n.Y+n.H/2
+		fmt.Fprintf(b, `<polygon points="%.2f,%.2f %.2f,%.2f %.2f,%.2f %.2f,%.2f" fill="%s" stroke="%s" stroke-width="%.2f"%s/>`+"\n",
+			cx, n.Y, n.X+n.W, cy, cx, n.Y+n.H, n.X, cy, esc(fill), esc(stroke), sw, dashAttr)
+	case graph.KindHexagon:
+		inset := min(n.W*0.2, 22)
+		cy := n.Y + n.H/2
+		fmt.Fprintf(b, `<polygon points="%.2f,%.2f %.2f,%.2f %.2f,%.2f %.2f,%.2f %.2f,%.2f %.2f,%.2f" fill="%s" stroke="%s" stroke-width="%.2f"%s/>`+"\n",
+			n.X+inset, n.Y, n.X+n.W-inset, n.Y, n.X+n.W, cy, n.X+n.W-inset, n.Y+n.H, n.X+inset, n.Y+n.H, n.X, cy,
+			esc(fill), esc(stroke), sw, dashAttr)
+	default:
+		rad := n.Style.Radius
+		if n.Kind == graph.KindRect {
+			rad = 2
+		}
+		fmt.Fprintf(b, `<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="%s" stroke="%s" stroke-width="%.2f"%s/>`+"\n",
+			n.X, n.Y, n.W, n.H, rad, esc(fill), esc(stroke), sw, dashAttr)
+	}
+
+	if n.Icon.Valid() && reg != nil {
+		if raw, ok := reg.SVGBytes(n.Icon.String()); ok {
+			sz := n.Icon.Size
+			if sz <= 0 {
+				if n.Kind == graph.KindIcon {
+					sz = min(n.W, n.H) * 0.5
+				} else {
+					sz = 22
+				}
+			}
+			ix := n.X + 12
+			iy := n.Y + (n.H-sz)/2
+			if n.Kind == graph.KindIcon || n.Icon.Position == "top" || n.Icon.Position == "center" {
+				ix = n.X + (n.W-sz)/2
+				iy = n.Y + 10
+			}
+			tint := firstStr(n.Icon.Tint, textCol)
+			inner := extractSVGInner(string(raw), tint)
+			vb := extractSVGViewBox(string(raw))
+			fmt.Fprintf(b, `<svg x="%.2f" y="%.2f" width="%.2f" height="%.2f" viewBox="%s" color="%s">%s</svg>`+"\n",
+				ix, iy, sz, sz, esc(vb), esc(tint), inner)
+		}
+	}
+
+	if strings.TrimSpace(n.Label) != "" {
+		fs := n.Style.FontSize
+		if fs <= 0 {
+			fs = 13
+		}
+		tx := n.X + n.W/2
+		ty := n.Y + n.H/2 + fs*0.35
+		anchor := "middle"
+		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
+			tx = n.X + 12
+			ty = n.Y + 20
+			anchor = "start"
+		} else if n.Icon.Valid() && n.Kind != graph.KindIcon && n.Icon.Position != "top" && n.Icon.Position != "center" {
+			tx = n.X + (n.W+24)/2
+		} else if n.Icon.Valid() && (n.Kind == graph.KindIcon || n.Icon.Position == "top") {
+			ty = n.Y + n.H - 12
+		}
+		fmt.Fprintf(b, `<text x="%.2f" y="%.2f" text-anchor="%s" font-size="%.1f" fill="%s">%s</text>`+"\n",
+			tx, ty, anchor, fs, esc(textCol), esc(n.Label))
+	}
+}
+
+func writeSVGEdge(b *strings.Builder, p *graph.Page, e *graph.Edge, defEdge, labelBG, labelText string) {
+	pts := p.EdgePoints(e)
+	if len(pts) < 2 {
+		return
+	}
+	col := firstStr(e.Style.Stroke, defEdge)
+	sw := e.Style.StrokeWidth
+	if sw <= 0 {
+		sw = 1.75
+	}
+	marker := ""
+	if e.EndArrow != "" && e.EndArrow != graph.ArrowNone {
+		marker = ` marker-end="url(#dg-arrow)"`
+	}
+	dashAttr := ""
+	if e.Style.Dash == graph.DashDashed {
+		dashAttr = ` stroke-dasharray="6,4"`
+	}
+	if e.Routing == graph.RouteCurved && len(pts) == 2 {
+		a, c := pts[0], pts[1]
+		dx := (c.X - a.X) * 0.5
+		dy := (c.Y - a.Y) * 0.5
+		var d string
+		if math.Abs(dx) >= math.Abs(dy) {
+			d = fmt.Sprintf("M %.2f %.2f C %.2f %.2f, %.2f %.2f, %.2f %.2f", a.X, a.Y, a.X+dx, a.Y, c.X-dx, c.Y, c.X, c.Y)
+		} else {
+			d = fmt.Sprintf("M %.2f %.2f C %.2f %.2f, %.2f %.2f, %.2f %.2f", a.X, a.Y, a.X, a.Y+dy, c.X, c.Y-dy, c.X, c.Y)
+		}
+		fmt.Fprintf(b, `<path d="%s" fill="none" stroke="%s" stroke-width="%.2f"%s%s/>`+"\n",
+			d, esc(col), sw, dashAttr, marker)
+	} else {
+		var sb strings.Builder
+		for i, pt := range pts {
+			if i > 0 {
+				sb.WriteByte(' ')
+			}
+			fmt.Fprintf(&sb, "%.2f,%.2f", pt.X, pt.Y)
+		}
+		fmt.Fprintf(b, `<polyline points="%s" fill="none" stroke="%s" stroke-width="%.2f" stroke-linejoin="round"%s%s/>`+"\n",
+			sb.String(), esc(col), sw, dashAttr, marker)
+	}
+	if strings.TrimSpace(e.Label) != "" {
+		mid := geo.PolylineMidpoint(pts)
+		tw := float64(len([]rune(e.Label)))*7.5 + 14
+		fmt.Fprintf(b, `<rect x="%.2f" y="%.2f" width="%.2f" height="20" rx="4" fill="%s" stroke="%s" stroke-opacity="0.35"/>`+"\n",
+			mid.X-tw/2, mid.Y-10, tw, esc(labelBG), esc(col))
+		fmt.Fprintf(b, `<text x="%.2f" y="%.2f" text-anchor="middle" font-size="12" fill="%s">%s</text>`+"\n",
+			mid.X, mid.Y+4, esc(labelText), esc(e.Label))
+	}
+}
+
+func extractSVGViewBox(raw string) string {
+	lower := strings.ToLower(raw)
+	if idx := strings.Index(lower, "viewbox="); idx >= 0 {
+		rest := raw[idx+len("viewbox="):]
+		if len(rest) > 0 && (rest[0] == '"' || rest[0] == '\'') {
+			q := rest[0]
+			if end := strings.IndexByte(rest[1:], q); end > 0 {
+				return rest[1 : 1+end]
+			}
+		}
+	}
+	return "0 0 24 24"
+}
+
+func extractSVGInner(raw, tint string) string {
+	start := strings.Index(raw, ">")
+	end := strings.LastIndex(raw, "</svg>")
+	if start < 0 || end <= start {
+		return ""
+	}
+	inner := raw[start+1 : end]
+	if tint != "" {
+		inner = strings.ReplaceAll(inner, "currentColor", tint)
+	}
+	return inner
+}
+
+func firstStr(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+func esc(s string) string { return html.EscapeString(s) }
