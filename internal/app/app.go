@@ -22,9 +22,12 @@ import (
 	"github.com/neko233-com/DrawGraph/internal/geo"
 	"github.com/neko233-com/DrawGraph/internal/graph"
 	"github.com/neko233-com/DrawGraph/internal/habits"
+	"github.com/neko233-com/DrawGraph/internal/i18n"
 	"github.com/neko233-com/DrawGraph/internal/icons"
 	"github.com/neko233-com/DrawGraph/internal/layout"
 	"github.com/neko233-com/DrawGraph/internal/media"
+	"github.com/neko233-com/DrawGraph/internal/mermaid"
+	"github.com/neko233-com/DrawGraph/internal/ops"
 	"github.com/neko233-com/DrawGraph/internal/render"
 	"github.com/neko233-com/DrawGraph/internal/update"
 )
@@ -35,6 +38,11 @@ type Host interface {
 	Changed(doc *graph.Document)
 	Update(fn func())
 	Window() *mygo.Window
+}
+
+// MenuHost is an optional Host extension called when UI language changes so OS menus rebuild live.
+type MenuHost interface {
+	RebuildMenu()
 }
 
 // Tool identifies the active pointer interaction mode on the canvas.
@@ -78,18 +86,28 @@ type App struct {
 	CanvasRect   ui.Rect
 	Initialized  bool
 
-	// Theme & view toggles
-	ThemeMode     string // "auto", "light", "dark"
-	DarkActive    bool
-	ShowGrid      bool
-	SidebarOpen   bool
-	InspectorOpen bool
-	MinimapOpen   bool
+	// Theme, localization, performance telemetry & view toggles
+	Language        string // "auto", "en", "zh-CN", "zh-TW", "ja", "ko"
+	ThemeMode       string // "auto", "light", "dark"
+	WheelMode       string // "pan", "zoom"
+	LayoutStrategy  string // "layered", "tree", "grid", "radial", "swimlane", "compact"
+	DarkActive      bool
+	ShowGrid        bool
+	SidebarOpen     bool
+	InspectorOpen   bool
+	MinimapOpen     bool
+	LastStats       render.PaintStats
+	LastPaintMicros int64
 
-	// Drawers & Updates
+	// Drawers, Modals & Updates
 	PluginsOpen         bool
 	HabitsOpen          bool
 	UpdateOpen          bool
+	PaletteOpen         bool
+	PaletteQuery        string
+	MermaidOpen         bool
+	MermaidText         string
+	ContextMenuPos      *[2]float32
 	UpdateState         updateState
 	UpdateRelease       *update.Release
 	UpdateProgress      float64
@@ -99,6 +117,7 @@ type App struct {
 
 	// Inline text editing
 	EditingNodeID string
+	EditingEdgeID string
 	EditingText   string
 	EditFocusSeq  int
 
@@ -122,9 +141,14 @@ type App struct {
 	connectSrcID     string
 	connectEndPt     geo.Vec
 	marqueeBox       *geo.Box
+	GuideLines       []graph.SnapGuide
 	spaceHeld        bool
 	lastPointerLocal [2]float32
 	minimapDrag      bool
+
+	// Structured node/edge clipboard
+	clipNodes []*graph.Node
+	clipEdges []*graph.Edge
 
 	// HD Image & Live Video caches
 	services     ui.Services
@@ -159,22 +183,26 @@ func New(doc *graph.Document, reg *icons.Registry, hb *habits.Store, host Host) 
 	doc.Normalize()
 
 	return &App{
-		Host:          host,
-		Hist:          graph.NewHistory(doc),
-		Icons:         reg,
-		Habits:        hb,
-		Cam:           render.Camera{X: 24, Y: 24, Zoom: 1},
-		Tool:          ToolSelect,
-		Shape:         p.DefaultNodeKind,
-		SelectedNodes: map[string]bool{},
-		SelectedEdges: map[string]bool{},
-		ThemeMode:     p.ThemeMode,
-		ShowGrid:      p.ShowGrid,
-		SidebarOpen:   p.SidebarOpen,
-		InspectorOpen: p.InspectorOpen,
-		MinimapOpen:   p.MinimapOpen,
-		mediaCache:    map[string]ui.ImageSource{},
-		videoPlayers:  map[string]*videoPlayerEntry{},
+		Host:           host,
+		Hist:           graph.NewHistory(doc),
+		Icons:          reg,
+		Habits:         hb,
+		Cam:            render.Camera{X: 24, Y: 24, Zoom: 1},
+		Tool:           ToolSelect,
+		Shape:          p.DefaultNodeKind,
+		SelectedNodes:  map[string]bool{},
+		SelectedEdges:  map[string]bool{},
+		Language:       p.Language,
+		ThemeMode:      p.ThemeMode,
+		WheelMode:      p.WheelMode,
+		LayoutStrategy: p.DefaultStrategy,
+		ShowGrid:       p.ShowGrid,
+		SidebarOpen:    p.SidebarOpen,
+		InspectorOpen:  p.InspectorOpen,
+		MinimapOpen:    p.MinimapOpen,
+		MermaidText:    "flowchart LR\n  User((User)) --> GW[API Gateway]\n  GW --> Auth{Auth Service}\n  Auth -->|Valid| API[Core API]\n  API --> DB[(Postgres)]",
+		mediaCache:     map[string]ui.ImageSource{},
+		videoPlayers:   map[string]*videoPlayerEntry{},
 	}
 }
 
@@ -239,8 +267,28 @@ func (a *App) View(c *ui.Context) {
 		a.pluginsDrawer(c, tk)
 		a.habitsDrawer(c, tk)
 		a.updateDrawer(c, tk)
+		a.paletteModal(c, tk)
+		a.mermaidModal(c, tk)
 		feedback.ToastHost(c, feedback.ToastHostProps{Placement: feedback.ToastBottomLeft})
 	})
+}
+
+// T translates a localized UI key using the active interface language preference.
+func (a *App) T(key string, args ...any) string {
+	return i18n.T(a.Language, key, args...)
+}
+
+// SetLanguage updates the active UI language, persists it to global habits, and refreshes OS menus.
+func (a *App) SetLanguage(lang string) {
+	norm := i18n.NormalizeTag(lang)
+	if norm == "" {
+		norm = "auto"
+	}
+	a.Language = norm
+	_ = a.Habits.Update(func(p *habits.Profile) { p.Language = norm })
+	if mh, ok := a.Host.(MenuHost); ok {
+		mh.RebuildMenu()
+	}
 }
 
 func (a *App) applyTheme(c *ui.Context) {
@@ -311,6 +359,62 @@ func (a *App) ReloadIcons() error {
 	return nil
 }
 
+// HandleControl implements ipc.ControlHandler so CLI & MCP can fit/focus/format the live GUI window.
+func (a *App) HandleControl(action string, params map[string]any) (map[string]any, error) {
+	done := make(chan error, 1)
+	a.Host.Update(func() {
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "fit":
+			a.ZoomToFit()
+		case "origin":
+			a.ResetOrigin()
+		case "focus":
+			nid, _ := params["nodeId"].(string)
+			if !a.FocusNode(nid) {
+				done <- fmt.Errorf("node %q not found", nid)
+				return
+			}
+		case "format":
+			strat, _ := params["strategy"].(string)
+			dir, _ := params["direction"].(string)
+			a.FormatWithStrategy(strat, dir)
+		case "zoom":
+			if z, ok := params["zoom"].(float64); ok && z > 0 {
+				a.Cam.Zoom = clampZoom(z)
+			}
+		default:
+			done <- fmt.Errorf("unknown live action %q", action)
+			return
+		}
+		done <- nil
+	})
+	if err := <-done; err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true, "action": action, "zoom": a.Cam.Zoom}, nil
+}
+
+// FocusNode smoothly centers the camera on node id (switching pages if needed) and selects it.
+func (a *App) FocusNode(id string) bool {
+	for _, pg := range a.Doc().Pages {
+		if n := pg.NodeByID(id); n != nil {
+			a.Doc().ActivePageID = pg.ID
+			a.SelectedNodes = map[string]bool{n.ID: true}
+			a.SelectedEdges = map[string]bool{}
+			a.Cam.Zoom = math.Max(0.6, math.Min(1.25, a.Cam.Zoom))
+			if a.CanvasRect.W > 0 {
+				a.Cam.X = float64(a.CanvasRect.W)/(2*a.Cam.Zoom) - (n.X + n.W/2)
+				a.Cam.Y = float64(a.CanvasRect.H)/(2*a.Cam.Zoom) - (n.Y + n.H/2)
+			} else {
+				a.Cam.X = 400 - (n.X + n.W/2)
+				a.Cam.Y = 300 - (n.Y + n.H/2)
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // AddShapeAt adds a new node of kind at world coordinate (or automatic tidy spot when centered=true).
 func (a *App) AddShapeAt(kind graph.NodeKind, label string, iconRef string, wx, wy float64, snap bool) *graph.Node {
 	a.Hist.Snapshot()
@@ -367,20 +471,79 @@ func (a *App) QuickInsertShape(kind graph.NodeKind, label, iconRef string) *grap
 	return a.AddShapeAt(kind, label, iconRef, wx, wy, true)
 }
 
-// FormatOneClick applies layered DAG layout, orthogonal routing, container wrapping, and user palette habits.
+// FormatOneClick applies the active layout strategy, orthogonal routing, container wrapping, and user palette habits.
 func (a *App) FormatOneClick(dirOverride string) layout.Report {
+	return a.FormatWithStrategy("", dirOverride)
+}
+
+// FormatWithStrategy runs one-click formatting using strategy ("layered", "tree", "grid", "radial", "swimlane", "compact").
+func (a *App) FormatWithStrategy(strategy, dirOverride string) layout.Report {
 	a.Hist.Snapshot()
 	opts := layout.OptionsFromHabits(a.Habits.Snapshot(), a.DarkActive)
-	if dirOverride == "LR" || dirOverride == "TB" {
-		opts.Direction = dirOverride
+	if strings.TrimSpace(strategy) != "" {
+		a.LayoutStrategy = strings.ToLower(strings.TrimSpace(strategy))
+	}
+	if a.LayoutStrategy != "" {
+		opts.Strategy = a.LayoutStrategy
+	}
+	switch strings.ToUpper(strings.TrimSpace(dirOverride)) {
+	case "LR", "RL", "TB", "BT":
+		opts.Direction = strings.ToUpper(strings.TrimSpace(dirOverride))
 	}
 	rep := layout.FormatPage(a.Doc(), a.Page(), opts)
 	a.Habits.RecordFormatHabit(opts.Direction, opts.Routing, opts.Preset, opts.GapX, opts.GapY, opts.GridSize)
+	_ = a.Habits.Update(func(pr *habits.Profile) { pr.DefaultStrategy = rep.Strategy })
 	a.ZoomToFit()
 	a.notifyChanged()
-	a.notifyToast(feedback.ToastSuccess, "Formatted Diagram",
-		fmt.Sprintf("%s layout · %d layers · %d nodes arranged", rep.Direction, rep.Layers, len(a.Page().Nodes)))
+	a.notifyToast(feedback.ToastSuccess, a.T("toast.formatted"),
+		fmt.Sprintf("%s %s · %d layers · %d nodes", rep.Strategy, rep.Direction, rep.Layers, len(a.Page().Nodes)))
 	return rep
+}
+
+// ImportMermaidText parses Mermaid flowchart syntax onto a formatted page cleanly (undoable).
+func (a *App) ImportMermaidText(src string) error {
+	doc, err := mermaid.Parse(src, a.Habits)
+	if err != nil {
+		return err
+	}
+	a.Hist.Snapshot()
+	impPage := doc.ActivePage()
+	if len(a.Page().Nodes) == 0 {
+		a.Page().Nodes = impPage.Nodes
+		a.Page().Edges = impPage.Edges
+		a.Page().MarkDirty()
+	} else {
+		p, err := a.Doc().AddPage("", "Mermaid", true)
+		if err != nil {
+			return err
+		}
+		p.Nodes = impPage.Nodes
+		p.Edges = impPage.Edges
+		p.MarkDirty()
+	}
+	a.SelectedNodes = map[string]bool{}
+	a.SelectedEdges = map[string]bool{}
+	a.ZoomToFit()
+	a.notifyChanged()
+	a.notifyToast(feedback.ToastSuccess, a.T("toast.mermaidDone"), fmt.Sprintf("%d nodes · %d edges", len(a.Page().Nodes), len(a.Page().Edges)))
+	return nil
+}
+
+// ApplyBuiltinTemplate resets or creates a page populated by template ("arch", "flow", "microservices", "org").
+func (a *App) ApplyBuiltinTemplate(name string) {
+	a.Hist.Snapshot()
+	if len(a.Page().Nodes) > 0 {
+		_, _ = a.Doc().AddPage("", strings.ToUpper(name[:1])+name[1:], true)
+	}
+	if err := ops.ApplyTemplate(a.Doc(), a.Page(), name, a.Habits); err != nil {
+		a.Hist.Undo()
+		a.notifyToast(feedback.ToastError, "Template Failed", err.Error())
+		return
+	}
+	a.SelectedNodes = map[string]bool{}
+	a.SelectedEdges = map[string]bool{}
+	a.ZoomToFit()
+	a.notifyChanged()
 }
 
 // Undo reverts to the previous document snapshot.
@@ -419,13 +582,14 @@ func (a *App) DeleteSelection() {
 	a.notifyChanged()
 }
 
-// DuplicateSelection clones all selected nodes with a clean offset.
+// DuplicateSelection clones all selected nodes with a clean offset (preserving internal connectors).
 func (a *App) DuplicateSelection() {
 	if len(a.SelectedNodes) == 0 {
 		return
 	}
 	a.Hist.Snapshot()
 	p := a.Page()
+	idMap := map[string]string{}
 	nextSel := map[string]bool{}
 	for id := range a.SelectedNodes {
 		orig := p.NodeByID(id)
@@ -440,11 +604,255 @@ func (a *App) DuplicateSelection() {
 			ic := *orig.Icon
 			cp.Icon = &ic
 		}
+		if orig.Media != nil {
+			m := *orig.Media
+			cp.Media = &m
+		}
 		_ = p.AddNode(&cp)
+		idMap[orig.ID] = cp.ID
 		nextSel[cp.ID] = true
+	}
+	for _, e := range p.Edges {
+		ns, oks := idMap[e.SourceID]
+		nt, okt := idMap[e.TargetID]
+		if oks && okt {
+			ec := *e
+			ec.ID = p.NextEdgeID("edge")
+			ec.SourceID = ns
+			ec.TargetID = nt
+			_ = p.AddEdge(&ec)
+		}
 	}
 	a.SelectedNodes = nextSel
 	a.notifyChanged()
+}
+
+// CopySelection copies selected nodes and their connecting edges to the structured clipboard.
+func (a *App) CopySelection() bool {
+	if len(a.SelectedNodes) == 0 {
+		return false
+	}
+	p := a.Page()
+	a.clipNodes = nil
+	a.clipEdges = nil
+	for id := range a.SelectedNodes {
+		if n := p.NodeByID(id); n != nil {
+			cp := *n
+			if n.Icon != nil {
+				ic := *n.Icon
+				cp.Icon = &ic
+			}
+			a.clipNodes = append(a.clipNodes, &cp)
+		}
+	}
+	for _, e := range p.Edges {
+		if a.SelectedNodes[e.SourceID] && a.SelectedNodes[e.TargetID] {
+			ec := *e
+			a.clipEdges = append(a.clipEdges, &ec)
+		}
+	}
+	a.notifyToast(feedback.ToastInfo, a.T("toast.copied"), fmt.Sprintf("%d nodes", len(a.clipNodes)))
+	return len(a.clipNodes) > 0
+}
+
+// CutSelection copies selected items and deletes them from the active page.
+func (a *App) CutSelection() bool {
+	if !a.CopySelection() {
+		return false
+	}
+	a.DeleteSelection()
+	return true
+}
+
+// PasteClipboard pastes copied nodes/edges if present, else falls back to OS clipboard images/files.
+func (a *App) PasteClipboard() bool {
+	if len(a.clipNodes) > 0 {
+		a.Hist.Snapshot()
+		p := a.Page()
+		idMap := map[string]string{}
+		nextSel := map[string]bool{}
+		for _, orig := range a.clipNodes {
+			cp := *orig
+			cp.ID = p.NextNodeID("node")
+			cp.X += 40
+			cp.Y += 40
+			if orig.Icon != nil {
+				ic := *orig.Icon
+				cp.Icon = &ic
+			}
+			_ = p.AddNode(&cp)
+			idMap[orig.ID] = cp.ID
+			nextSel[cp.ID] = true
+			// Advance cached clipboard offset for repeated Ctrl+V
+			orig.X += 20
+			orig.Y += 20
+		}
+		for _, oe := range a.clipEdges {
+			ns, oks := idMap[oe.SourceID]
+			nt, okt := idMap[oe.TargetID]
+			if oks && okt {
+				ec := *oe
+				ec.ID = p.NextEdgeID("edge")
+				ec.SourceID = ns
+				ec.TargetID = nt
+				_ = p.AddEdge(&ec)
+			}
+		}
+		a.SelectedNodes = nextSel
+		a.SelectedEdges = map[string]bool{}
+		a.notifyChanged()
+		return true
+	}
+	return a.PasteClipboardMedia()
+}
+
+// GroupSelection wraps selected nodes in a container.
+func (a *App) GroupSelection() {
+	if len(a.SelectedNodes) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(a.SelectedNodes))
+	for id := range a.SelectedNodes {
+		ids = append(ids, id)
+	}
+	a.Hist.Snapshot()
+	grp, err := graph.GroupNodes(a.Page(), ids, "Group")
+	if err == nil && grp != nil {
+		a.SelectedNodes = map[string]bool{grp.ID: true}
+		a.notifyChanged()
+	}
+}
+
+// UngroupSelection dissolves selected containers or unparents selected nodes.
+func (a *App) UngroupSelection() {
+	if len(a.SelectedNodes) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(a.SelectedNodes))
+	for id := range a.SelectedNodes {
+		ids = append(ids, id)
+	}
+	a.Hist.Snapshot()
+	if graph.UngroupNodes(a.Page(), ids) {
+		a.SelectedNodes = map[string]bool{}
+		a.notifyChanged()
+	}
+}
+
+// ReorderSelection adjusts ZIndex of selected nodes (front, back, forward, backward).
+func (a *App) ReorderSelection(mode graph.ZOrderMode) {
+	if len(a.SelectedNodes) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(a.SelectedNodes))
+	for id := range a.SelectedNodes {
+		ids = append(ids, id)
+	}
+	a.Hist.Snapshot()
+	if graph.ReorderNodes(a.Page(), ids, mode) {
+		a.notifyChanged()
+	}
+}
+
+// ToggleLockSelection toggles Locked on selected nodes.
+func (a *App) ToggleLockSelection() {
+	if len(a.SelectedNodes) == 0 {
+		return
+	}
+	a.Hist.Snapshot()
+	anyUnlocked := false
+	for id := range a.SelectedNodes {
+		if n := a.Page().NodeByID(id); n != nil && !n.Locked {
+			anyUnlocked = true
+			break
+		}
+	}
+	for id := range a.SelectedNodes {
+		if n := a.Page().NodeByID(id); n != nil {
+			n.Locked = anyUnlocked
+		}
+	}
+	a.notifyChanged()
+}
+
+// RenameActivePage renames the currently active page tab.
+func (a *App) RenameActivePage(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" || a.Page().Name == name {
+		return
+	}
+	a.Hist.Snapshot()
+	a.Page().Name = name
+	a.notifyChanged()
+}
+
+// DuplicateActivePage clones the current page to a new page tab.
+func (a *App) DuplicateActivePage() {
+	a.Hist.Snapshot()
+	cur := a.Page()
+	cpDoc := a.Doc().Clone()
+	clonedPage := cpDoc.PageByID(cur.ID)
+	clonedPage.ID = a.Doc().NextPageID()
+	clonedPage.Name = cur.Name + " Copy"
+	clonedPage.MarkDirty()
+	a.Doc().Pages = append(a.Doc().Pages, clonedPage)
+	a.Doc().ActivePageID = clonedPage.ID
+	a.SelectedNodes = map[string]bool{}
+	a.SelectedEdges = map[string]bool{}
+	a.notifyChanged()
+}
+
+// DeleteActivePage removes the current page when more than one page exists.
+func (a *App) DeleteActivePage() bool {
+	if len(a.Doc().Pages) <= 1 {
+		return false
+	}
+	a.Hist.Snapshot()
+	curID := a.Page().ID
+	kept := a.Doc().Pages[:0]
+	for _, pg := range a.Doc().Pages {
+		if pg.ID != curID {
+			kept = append(kept, pg)
+		}
+	}
+	a.Doc().Pages = kept
+	a.Doc().Normalize()
+	a.SelectedNodes = map[string]bool{}
+	a.SelectedEdges = map[string]bool{}
+	a.ZoomToFit()
+	a.notifyChanged()
+	return true
+}
+
+// ZoomToSelection frames currently selected nodes cleanly in the viewport.
+func (a *App) ZoomToSelection() {
+	if len(a.SelectedNodes) == 0 {
+		a.ZoomToFit()
+		return
+	}
+	var box geo.Box
+	first := true
+	for id := range a.SelectedNodes {
+		if n := a.Page().NodeByID(id); n != nil {
+			if first {
+				box = n.Box()
+				first = false
+			} else {
+				box = box.Union(n.Box())
+			}
+		}
+	}
+	if first || a.CanvasRect.W <= 40 || a.CanvasRect.H <= 40 {
+		a.ZoomToFit()
+		return
+	}
+	box = box.Expand(64)
+	zx := float64(a.CanvasRect.W) / box.W
+	zy := float64(a.CanvasRect.H) / box.H
+	z := math.Max(0.25, math.Min(1.6, math.Min(zx, zy)))
+	a.Cam.Zoom = z
+	a.Cam.X = (float64(a.CanvasRect.W)/z-box.W)/2 - box.X
+	a.Cam.Y = (float64(a.CanvasRect.H)/z-box.H)/2 - box.Y
 }
 
 // AlignSelection aligns 2+ selected nodes.
@@ -557,12 +965,38 @@ func (a *App) activeVideoMap() map[string]bool {
 	if a.Host == nil || a.Host.Window() == nil {
 		return nil
 	}
+	page := a.Page()
+	if page == nil {
+		return nil
+	}
+	var candidates []*graph.Node
+	if a.CanvasRect.W > 0 && a.Cam.Zoom > 0 {
+		viewWorld := geo.Box{
+			X: -a.Cam.X - 60,
+			Y: -a.Cam.Y - 60,
+			W: float64(a.CanvasRect.W)/a.Cam.Zoom + 120,
+			H: float64(a.CanvasRect.H)/a.Cam.Zoom + 120,
+		}
+		candidates = page.EnsureIndex().QueryRect(viewWorld)
+	} else {
+		candidates = page.Nodes
+	}
 	m := map[string]bool{}
-	for _, n := range a.Page().Nodes {
+	const maxConcurrentVideos = 6
+	for _, n := range candidates {
 		if n.Kind == graph.KindVideo && n.Media != nil {
+			if len(m) >= maxConcurrentVideos {
+				break
+			}
 			if vp := a.ensureVideoPlayer(n); vp != nil && vp.player != nil && vp.player.Ready() {
 				m[n.ID] = true
 			}
+		}
+	}
+	// Pause offscreen or overflow video players cleanly to keep GPU/decode budget lean.
+	for id, vp := range a.videoPlayers {
+		if !m[id] && vp != nil && vp.player != nil && vp.player.Playing() {
+			vp.player.Pause()
 		}
 	}
 	return m
@@ -795,6 +1229,7 @@ func (a *App) ResizeMediaNode(n *graph.Node, native bool) {
 	} else {
 		n.W, n.H = media.FitDisplaySize(asset.NaturalW, asset.NaturalH, a.Habits.Snapshot().DefaultMediaMax, media.DefaultMinDisplaySide)
 	}
+	a.Page().MarkDirty()
 	a.notifyChanged()
 }
 

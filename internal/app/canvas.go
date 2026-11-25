@@ -3,8 +3,11 @@ package app
 import (
 	"fmt"
 	"math"
+	"sort"
+	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/field"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
@@ -24,6 +27,7 @@ func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
 			Cursor(a.canvasCursor())
 		cv.Label("Canvas")
 		cv.Draw(func(p *ui.Painter, r ui.Rect) {
+			t0 := time.Now()
 			var preview *[2]geo.Vec
 			if a.drag == dragConnect && a.connectSrcID != "" {
 				if src := a.Page().NodeByID(a.connectSrcID); src != nil {
@@ -32,7 +36,7 @@ func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
 					preview = &pv
 				}
 			}
-			render.PaintScene(p, r, render.SceneState{
+			a.LastStats = render.PaintSceneWithStats(p, r, render.SceneState{
 				Doc:            a.Doc(),
 				Page:           a.Page(),
 				Icons:          a.Icons,
@@ -46,7 +50,9 @@ func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
 				HoveredNodeID:  a.HoveredNodeID,
 				ConnectPreview: preview,
 				MarqueeBox:     a.marqueeBox,
+				GuideLines:     a.GuideLines,
 			})
+			a.LastPaintMicros = time.Since(t0).Microseconds()
 		})
 		cv.HandleInput(func(ev ui.InputEvent) bool {
 			return a.handleCanvasInput(c, ev)
@@ -58,12 +64,14 @@ func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
 			ui.Box(c.Key("drop-overlay")).Absolute().Top(12).Left(12).Right(12).Bottom(12).Radius(12).
 				Background(tk.Primary.Alpha(0.10)).BorderWidth(2).BorderColor(tk.Primary).Center().Children(func() {
 				ui.Box(c).Padding(12, 20).Radius(10).Background(tk.BgElevated).BorderWidth(1).BorderColor(tk.Primary).Children(func() {
-					ui.Text(c, "Drop images or videos to create high-resolution nodes").FontSize(14).FontWeight(600).TextColor(tk.Primary)
+					ui.Text(c, a.T("canvas.dropHint")).FontSize(14).FontWeight(600).TextColor(tk.Primary)
 				})
 			})
 		}
 
 		a.inlineTextEditor(c, tk)
+		a.selectionQuickBar(c, tk)
+		a.contextMenuOverlay(c, tk)
 		if a.MinimapOpen {
 			a.minimapOverlay(c, tk)
 		}
@@ -113,7 +121,7 @@ func (a *App) handleCanvasInput(c *ui.Context, ev ui.InputEvent) bool {
 			return true
 		}
 	case ui.InputScroll:
-		if ev.Mods&ui.Cmd != 0 || ev.Mods&ui.Ctrl != 0 {
+		if ev.Mods&ui.Cmd != 0 || ev.Mods&ui.Ctrl != 0 || (a.WheelMode == "zoom" && ev.Mods == 0 && ev.DY != 0 && ev.DX == 0) {
 			factor := math.Exp(-float64(ev.DY) * 0.004)
 			a.zoomAt(float64(ev.X), float64(ev.Y), factor)
 		} else {
@@ -140,6 +148,17 @@ func (a *App) handleCanvasInput(c *ui.Context, ev ui.InputEvent) bool {
 		return true
 
 	case ui.InputPointerDown:
+		a.ContextMenuPos = nil
+		// Right-click opens canvas / selection context menu cleanly.
+		if ev.Button == 1 {
+			if hit := a.Page().HitNode(worldPt); hit != nil && !a.SelectedNodes[hit.ID] {
+				a.SelectedNodes = map[string]bool{hit.ID: true}
+				a.SelectedEdges = map[string]bool{}
+			}
+			pos := [2]float32{ev.X, ev.Y}
+			a.ContextMenuPos = &pos
+			return true
+		}
 		// Middle button, Space+click, or Hand tool -> pan.
 		if ev.Button == 2 || a.spaceHeld || a.Tool == ToolHand {
 			a.drag = dragPan
@@ -156,6 +175,7 @@ func (a *App) handleCanvasInput(c *ui.Context, ev ui.InputEvent) bool {
 			n := a.AddShapeAt(a.Shape, "", "", worldPt.X-80, worldPt.Y-36, true)
 			a.Tool = ToolSelect
 			a.EditingNodeID = n.ID
+			a.EditingEdgeID = ""
 			a.EditingText = n.Label
 			a.EditFocusSeq++
 			return true
@@ -191,13 +211,23 @@ func (a *App) handleCanvasInput(c *ui.Context, ev ui.InputEvent) bool {
 			}
 		}
 
-		// Double-click opens inline text editor.
+		// Double-click opens inline text editor for node or connector label.
 		if ev.Clicks >= 2 {
 			if hit := a.Page().HitNode(worldPt); hit != nil {
 				a.SelectedNodes = map[string]bool{hit.ID: true}
 				a.SelectedEdges = map[string]bool{}
 				a.EditingNodeID = hit.ID
+				a.EditingEdgeID = ""
 				a.EditingText = hit.Label
+				a.EditFocusSeq++
+				return true
+			}
+			if edge := a.Page().HitEdge(worldPt, 12/math.Max(a.Cam.Zoom, 0.25)); edge != nil {
+				a.SelectedNodes = map[string]bool{}
+				a.SelectedEdges = map[string]bool{edge.ID: true}
+				a.EditingNodeID = ""
+				a.EditingEdgeID = edge.ID
+				a.EditingText = edge.Label
 				a.EditFocusSeq++
 				return true
 			}
@@ -219,9 +249,27 @@ func (a *App) handleCanvasInput(c *ui.Context, ev ui.InputEvent) bool {
 			a.drag = dragMoveNodes
 			a.dragStartWorld = worldPt
 			a.dragNodeOrig = map[string]geo.Box{}
+			// Include children inside selected containers/swimlanes so moving a group moves its members cleanly!
+			queue := make([]string, 0, len(a.SelectedNodes))
 			for id := range a.SelectedNodes {
-				if n := a.Page().NodeByID(id); n != nil {
-					a.dragNodeOrig[id] = n.Box()
+				queue = append(queue, id)
+			}
+			for len(queue) > 0 {
+				curID := queue[0]
+				queue = queue[1:]
+				n := a.Page().NodeByID(curID)
+				if n == nil {
+					continue
+				}
+				a.dragNodeOrig[n.ID] = n.Box()
+				if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
+					for _, ch := range a.Page().Nodes {
+						if ch.ParentID == n.ID {
+							if _, seen := a.dragNodeOrig[ch.ID]; !seen {
+								queue = append(queue, ch.ID)
+							}
+						}
+					}
 				}
 			}
 			return true
@@ -237,6 +285,7 @@ func (a *App) handleCanvasInput(c *ui.Context, ev ui.InputEvent) bool {
 		a.SelectedNodes = map[string]bool{}
 		a.SelectedEdges = map[string]bool{}
 		a.EditingNodeID = ""
+		a.EditingEdgeID = ""
 		a.drag = dragMarquee
 		a.dragStartWorld = worldPt
 		b := geo.B(worldPt.X, worldPt.Y, 0, 0)
@@ -263,6 +312,31 @@ func (a *App) handleDragMove(ev ui.InputEvent, worldPt geo.Vec) {
 		dx := worldPt.X - a.dragStartWorld.X
 		dy := worldPt.Y - a.dragStartWorld.Y
 		grid := a.Doc().GridSize
+		a.GuideLines = nil
+		movingSet := make(map[string]bool, len(a.dragNodeOrig))
+		var unionBox geo.Box
+		hasBox := false
+		for id, orig := range a.dragNodeOrig {
+			movingSet[id] = true
+			b := geo.B(orig.X+dx, orig.Y+dy, orig.W, orig.H)
+			if a.Doc().SnapToGrid {
+				b.X = geo.Snap(b.X, grid)
+				b.Y = geo.Snap(b.Y, grid)
+			}
+			if !hasBox {
+				unionBox = b
+				hasBox = true
+			} else {
+				unionBox = unionBox.Union(b)
+			}
+		}
+		var snapDX, snapDY float64
+		if hasBox && ev.Mods&ui.Alt == 0 {
+			tol := 7.0 / math.Max(a.Cam.Zoom, 0.3)
+			var guides []graph.SnapGuide
+			snapDX, snapDY, guides = a.Page().EnsureIndex().FindSnapGuides(movingSet, unionBox, tol)
+			a.GuideLines = guides
+		}
 		for id, orig := range a.dragNodeOrig {
 			n := a.Page().NodeByID(id)
 			if n == nil || n.Locked {
@@ -274,9 +348,10 @@ func (a *App) handleDragMove(ev ui.InputEvent, worldPt geo.Vec) {
 				nx = geo.Snap(nx, grid)
 				ny = geo.Snap(ny, grid)
 			}
-			n.X = nx
-			n.Y = ny
+			n.X = nx + snapDX
+			n.Y = ny + snapDY
 		}
+		a.Page().MarkDirty()
 	case dragResizeNode:
 		dx := worldPt.X - a.dragStartWorld.X
 		dy := worldPt.Y - a.dragStartWorld.Y
@@ -329,6 +404,7 @@ func (a *App) handleDragMove(ev ui.InputEvent, worldPt geo.Vec) {
 func (a *App) handleDragEnd(worldPt geo.Vec) {
 	switch a.drag {
 	case dragMoveNodes, dragResizeNode:
+		a.Page().MarkDirty()
 		a.notifyChanged()
 	case dragConnect:
 		if hit := a.Page().HitNode(worldPt); hit != nil && hit.ID != a.connectSrcID {
@@ -350,7 +426,7 @@ func (a *App) handleDragEnd(worldPt geo.Vec) {
 			norm := a.marqueeBox.Normalized()
 			if norm.W > 6 || norm.H > 6 {
 				a.SelectedNodes = map[string]bool{}
-				for _, n := range a.Page().Nodes {
+				for _, n := range a.Page().EnsureIndex().QueryRect(norm) {
 					if norm.Overlaps(n.Box()) {
 						a.SelectedNodes[n.ID] = true
 					}
@@ -359,27 +435,40 @@ func (a *App) handleDragEnd(worldPt geo.Vec) {
 		}
 		a.marqueeBox = nil
 	}
+	a.GuideLines = nil
 	a.drag = dragNone
 	a.dragNodeOrig = nil
 }
 
 func (a *App) inlineTextEditor(c *ui.Context, tk *theme.Tokens) {
-	if a.EditingNodeID == "" || a.CanvasRect.W <= 0 {
-		return
-	}
-	n := a.Page().NodeByID(a.EditingNodeID)
-	if n == nil {
-		a.EditingNodeID = ""
+	if (a.EditingNodeID == "" && a.EditingEdgeID == "") || a.CanvasRect.W <= 0 {
 		return
 	}
 	localRect := ui.Rect{X: 0, Y: 0, W: a.CanvasRect.W, H: a.CanvasRect.H}
-	sx, sy := a.Cam.WorldToScreen(localRect, geo.V(n.X, n.Y))
-	sw := float32(n.W * a.Cam.Zoom)
-	if sw < 140 {
-		sw = 140
+	var sx, sy, sw float32
+	if a.EditingNodeID != "" {
+		n := a.Page().NodeByID(a.EditingNodeID)
+		if n == nil {
+			a.EditingNodeID = ""
+			return
+		}
+		sx, sy = a.Cam.WorldToScreen(localRect, geo.V(n.X, n.Y))
+		sy += float32(n.H*a.Cam.Zoom)/2 - 18
+		sw = max(float32(140), float32(n.W*a.Cam.Zoom))
+	} else {
+		e := a.Page().EdgeByID(a.EditingEdgeID)
+		if e == nil {
+			a.EditingEdgeID = ""
+			return
+		}
+		mid := geo.PolylineMidpoint(a.Page().EdgePoints(e))
+		sx, sy = a.Cam.WorldToScreen(localRect, mid)
+		sx -= 80
+		sy -= 18
+		sw = 160
 	}
 	box := ui.Box(c.Key("inline-edit")).Absolute().
-		Left(sx).Top(sy + float32(n.H*a.Cam.Zoom)/2 - 18).
+		Left(sx).Top(sy).
 		Width(sw).Padding(4).Radius(8).
 		Background(tk.BgElevated).
 		BorderWidth(1.5).BorderColor(tk.Primary)
@@ -387,7 +476,7 @@ func (a *App) inlineTextEditor(c *ui.Context, tk *theme.Tokens) {
 		inp := field.Input(c, &a.EditingText, field.InputProps{
 			Variant:     field.InputBorderless,
 			Size:        theme.Small,
-			Placeholder: "Node label...",
+			Placeholder: a.T("insp.label") + "...",
 		})
 		inp.FillWidth()
 		inp.OnTextKey(func(k ui.TextKey) bool {
@@ -397,6 +486,7 @@ func (a *App) inlineTextEditor(c *ui.Context, tk *theme.Tokens) {
 			}
 			if k.Key == ui.KeyEscape {
 				a.EditingNodeID = ""
+				a.EditingEdgeID = ""
 				return true
 			}
 			return false
@@ -405,12 +495,122 @@ func (a *App) inlineTextEditor(c *ui.Context, tk *theme.Tokens) {
 }
 
 func (a *App) commitInlineEdit() {
-	if n := a.Page().NodeByID(a.EditingNodeID); n != nil {
-		a.Hist.Snapshot()
-		n.Label = a.EditingText
-		a.notifyChanged()
+	if a.EditingNodeID != "" {
+		if n := a.Page().NodeByID(a.EditingNodeID); n != nil {
+			a.Hist.Snapshot()
+			n.Label = a.EditingText
+			a.Page().MarkDirty()
+			a.notifyChanged()
+		}
+	} else if a.EditingEdgeID != "" {
+		if e := a.Page().EdgeByID(a.EditingEdgeID); e != nil {
+			a.Hist.Snapshot()
+			e.Label = a.EditingText
+			a.Page().MarkDirty()
+			a.notifyChanged()
+		}
 	}
 	a.EditingNodeID = ""
+	a.EditingEdgeID = ""
+}
+
+func (a *App) selectionQuickBar(c *ui.Context, tk *theme.Tokens) {
+	if len(a.SelectedNodes) == 0 || a.drag != dragNone || a.EditingNodeID != "" || a.CanvasRect.W <= 0 {
+		return
+	}
+	var selBox geo.Box
+	first := true
+	lockedAny := false
+	for id := range a.SelectedNodes {
+		if n := a.Page().NodeByID(id); n != nil {
+			if first {
+				selBox = n.Box()
+				first = false
+			} else {
+				selBox = selBox.Union(n.Box())
+			}
+			if n.Locked {
+				lockedAny = true
+			}
+		}
+	}
+	if first {
+		return
+	}
+	localRect := ui.Rect{X: 0, Y: 0, W: a.CanvasRect.W, H: a.CanvasRect.H}
+	sx, sy := a.Cam.WorldToScreen(localRect, geo.V(selBox.X+selBox.W/2, selBox.Y))
+	barY := max(float32(8), sy-44)
+	barX := max(float32(8), min(a.CanvasRect.W-340, sx-160))
+
+	bar := ui.Row(c.Key("sel-quick-bar")).Absolute().Left(barX).Top(barY).Height(32).Gap(4).Padding(0, 6).
+		Radius(8).AlignItems(ui.Center).Background(tk.BgElevated).
+		BorderWidth(1).BorderColor(tk.BorderSecondary)
+	bar.Children(func() {
+		if action.Button(c, a.T("ctx.duplicate"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			a.DuplicateSelection()
+		}
+		if len(a.SelectedNodes) >= 2 {
+			if action.Button(c, a.T("ctx.group"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+				a.GroupSelection()
+			}
+		} else if n := a.singleSelectedNode(); n != nil && (n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane) {
+			if action.Button(c, a.T("ctx.ungroup"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+				a.UngroupSelection()
+			}
+		}
+		if action.Button(c, a.T("ctx.front"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			a.ReorderSelection(graph.ZOrderFront)
+		}
+		if action.Button(c, a.T("ctx.back"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			a.ReorderSelection(graph.ZOrderBack)
+		}
+		lockLbl := a.T("ctx.lock")
+		if lockedAny {
+			lockLbl = a.T("ctx.unlock")
+		}
+		if action.Button(c, lockLbl, action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			a.ToggleLockSelection()
+		}
+		if action.Button(c, a.T("ctx.delete"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).TextColor(tk.Error).Clicked() {
+			a.DeleteSelection()
+		}
+	})
+}
+
+func (a *App) contextMenuOverlay(c *ui.Context, tk *theme.Tokens) {
+	if a.ContextMenuPos == nil || a.CanvasRect.W <= 0 {
+		return
+	}
+	mx := max(float32(8), min(a.CanvasRect.W-190, a.ContextMenuPos[0]))
+	my := max(float32(8), min(a.CanvasRect.H-240, a.ContextMenuPos[1]))
+	menu := ui.Column(c.Key("canvas-ctx-menu")).Absolute().Left(mx).Top(my).Width(178).Padding(6).Gap(2).
+		Radius(10).Background(tk.BgElevated).BorderWidth(1).BorderColor(tk.BorderSecondary)
+	menu.Children(func() {
+		btn := func(label string, fn func()) {
+			b := action.Button(c, label, action.ButtonProps{Variant: action.Text, Size: theme.Small})
+			b.FillWidth()
+			if b.Clicked() {
+				a.ContextMenuPos = nil
+				fn()
+			}
+		}
+		if len(a.SelectedNodes) > 0 {
+			btn(a.T("ctx.duplicate"), func() { a.DuplicateSelection() })
+			if len(a.SelectedNodes) >= 2 {
+				btn(a.T("ctx.group"), func() { a.GroupSelection() })
+			}
+			btn(a.T("ctx.front"), func() { a.ReorderSelection(graph.ZOrderFront) })
+			btn(a.T("ctx.back"), func() { a.ReorderSelection(graph.ZOrderBack) })
+			btn(a.T("ctx.lock"), func() { a.ToggleLockSelection() })
+			btn(a.T("ctx.delete"), func() { a.DeleteSelection() })
+		} else {
+			btn(a.T("ctx.formatSel"), func() { a.FormatOneClick("") })
+			btn(a.T("tb.zoomFit"), func() { a.ZoomToFit() })
+			btn(a.T("status.origin"), func() { a.ResetOrigin() })
+			btn(a.T("menu.view.commandPalette"), func() { a.PaletteOpen = true; a.PaletteQuery = "" })
+		}
+	})
+	_ = sort.Strings
 }
 
 func (a *App) videoOverlayLayer(c *ui.Context, tk *theme.Tokens) {

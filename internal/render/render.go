@@ -58,6 +58,16 @@ type SceneState struct {
 	HoveredNodeID  string
 	ConnectPreview *[2]geo.Vec
 	MarqueeBox     *geo.Box
+	GuideLines     []graph.SnapGuide
+}
+
+// PaintStats reports virtualized canvas culling and LOD metrics for telemetry HUD & tests.
+type PaintStats struct {
+	TotalNodes   int
+	VisibleNodes int
+	TotalEdges   int
+	VisibleEdges int
+	LODMode      string
 }
 
 // ShapePaintContext passes resolved colors and geometry to custom registered shape plugins.
@@ -147,8 +157,15 @@ func PaletteFor(dark bool) Palette {
 
 // PaintScene renders the diagram and interactive editing overlays into rect r.
 func PaintScene(p *ui.Painter, r ui.Rect, st SceneState) {
+	_ = PaintSceneWithStats(p, r, st)
+}
+
+// PaintSceneWithStats renders the visible viewport using spatial frustum culling and GPU LOD,
+// returning live virtualization telemetry.
+func PaintSceneWithStats(p *ui.Painter, r ui.Rect, st SceneState) PaintStats {
+	var stats PaintStats
 	if st.Page == nil {
-		return
+		return stats
 	}
 	if st.Cam.Zoom <= 0 {
 		st.Cam.Zoom = 1
@@ -166,25 +183,50 @@ func PaintScene(p *ui.Painter, r ui.Rect, st SceneState) {
 		paintGrid(p, r, st, pal)
 	}
 
-	// Render containers and swimlanes first, then regular nodes, then edges, then overlays.
-	sorted := st.Page.SortedNodes()
-	for _, n := range sorted {
+	margin := 80.0 / math.Max(st.Cam.Zoom, 0.05)
+	viewWorld := geo.Box{
+		X: -st.Cam.X - margin,
+		Y: -st.Cam.Y - margin,
+		W: float64(r.W)/st.Cam.Zoom + margin*2,
+		H: float64(r.H)/st.Cam.Zoom + margin*2,
+	}
+
+	idx := st.Page.EnsureIndex()
+	visibleNodes := idx.QueryRect(viewWorld)
+	visibleEdges := idx.QueryEdges(st.Page, viewWorld)
+
+	stats.TotalNodes = len(st.Page.Nodes)
+	stats.VisibleNodes = len(visibleNodes)
+	stats.TotalEdges = len(st.Page.Edges)
+	stats.VisibleEdges = len(visibleEdges)
+	switch {
+	case st.Cam.Zoom < 0.08:
+		stats.LODMode = "micro"
+	case st.Cam.Zoom < 0.28:
+		stats.LODMode = "low"
+	default:
+		stats.LODMode = "high"
+	}
+
+	// Render containers and swimlanes first, then visible edges, then regular visible nodes.
+	for _, n := range visibleNodes {
 		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
 			paintNode(p, r, st, pal, n)
 		}
 	}
-	for _, e := range st.Page.Edges {
-		paintEdge(p, r, st, pal, e)
+	for _, ve := range visibleEdges {
+		paintVisibleEdge(p, r, st, pal, ve)
 	}
-	for _, n := range sorted {
+	for _, n := range visibleNodes {
 		if n.Kind != graph.KindContainer && n.Kind != graph.KindSwimlane {
 			paintNode(p, r, st, pal, n)
 		}
 	}
 
 	if !st.Export {
-		paintOverlays(p, r, st, pal)
+		paintOverlays(p, r, st, pal, idx)
 	}
+	return stats
 }
 
 func paintGrid(p *ui.Painter, r ui.Rect, st SceneState, pal Palette) {
@@ -205,21 +247,38 @@ func paintGrid(p *ui.Painter, r ui.Rect, st SceneState, pal Palette) {
 		W: float64(r.W) / st.Cam.Zoom,
 		H: float64(r.H) / st.Cam.Zoom,
 	}
-	x0 := math.Floor(view.X/step) * step
-	y0 := math.Floor(view.Y/step) * step
-	for y := y0; y <= view.MaxY(); y += step {
-		sy := r.Y + float32((y+st.Cam.Y)*st.Cam.Zoom)
-		isMajorY := math.Abs(math.Mod(math.Abs(y), major)) < 0.01
-		for x := x0; x <= view.MaxX(); x += step {
+	cols := int(view.W/step) + 1
+	rows := int(view.H/step) + 1
+	// Switch to major grid lines when zoom-out would otherwise emit >900 minor dot calls.
+	if cols*rows > 900 || st.Cam.Zoom < 0.4 {
+		mx0 := math.Floor(view.X/major) * major
+		my0 := math.Floor(view.Y/major) * major
+		lineCol := pal.GridDot.Alpha(0.7)
+		for x := mx0; x <= view.MaxX(); x += major {
 			sx := r.X + float32((x+st.Cam.X)*st.Cam.Zoom)
-			isMajor := isMajorY && math.Abs(math.Mod(math.Abs(x), major)) < 0.01
-			col := pal.GridDot
-			sz := float32(1.5)
-			if isMajor {
-				col = pal.GridMajor
-				sz = 2.5
+			p.Line(sx, r.Y, sx, r.Y+r.H, 1, lineCol)
+		}
+		for y := my0; y <= view.MaxY(); y += major {
+			sy := r.Y + float32((y+st.Cam.Y)*st.Cam.Zoom)
+			p.Line(r.X, sy, r.X+r.W, sy, 1, lineCol)
+		}
+	} else {
+		x0 := math.Floor(view.X/step) * step
+		y0 := math.Floor(view.Y/step) * step
+		for y := y0; y <= view.MaxY(); y += step {
+			sy := r.Y + float32((y+st.Cam.Y)*st.Cam.Zoom)
+			isMajorY := math.Abs(math.Mod(math.Abs(y), major)) < 0.01
+			for x := x0; x <= view.MaxX(); x += step {
+				sx := r.X + float32((x+st.Cam.X)*st.Cam.Zoom)
+				isMajor := isMajorY && math.Abs(math.Mod(math.Abs(x), major)) < 0.01
+				col := pal.GridDot
+				sz := float32(1.5)
+				if isMajor {
+					col = pal.GridMajor
+					sz = 2.5
+				}
+				p.Fill(ui.Rect{X: sx - sz/2, Y: sy - sz/2, W: sz, H: sz}, col, sz/2)
 			}
-			p.Fill(ui.Rect{X: sx - sz/2, Y: sy - sz/2, W: sz, H: sz}, col, sz/2)
 		}
 	}
 	// Draw subtle world origin (0,0) crosshair when visible inside viewport.
@@ -264,9 +323,25 @@ func paintNode(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, n *graph.No
 		}
 	}
 	stroke = stroke.Alpha(float32(stroke.A) / 255.0 * op)
-	swpx := float32(n.Style.StrokeWidth) * z
-	if swpx < 1 {
-		swpx = 1
+
+	// GPU Virtual Canvas LOD: bypass heavy path/text/shadow calls when nodes are tiny on screen.
+	if !st.Export {
+		if sw < 4 || sh < 4 || z < 0.08 {
+			c := fill
+			if c.A < 25 {
+				c = stroke
+			}
+			p.Fill(ui.Rect{X: box.X, Y: box.Y, W: max(float32(2), box.W), H: max(float32(2), box.H)}, c, 0)
+			return
+		}
+		if sw < 36 || sh < 20 || z < 0.28 {
+			rad := min(float32(n.Style.Radius)*z, min(box.W, box.H)*0.25)
+			p.Fill(box, fill, rad)
+			if n.Kind != graph.KindText {
+				p.Stroke(box, stroke, rad, 1)
+			}
+			return
+		}
 	}
 
 	textCol := pal.NodeText
@@ -276,6 +351,10 @@ func paintNode(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, n *graph.No
 		}
 	}
 	textCol = textCol.Alpha(op)
+	swpx := float32(n.Style.StrokeWidth) * z
+	if swpx < 1 {
+		swpx = 1
+	}
 
 	rad := float32(n.Style.Radius) * z
 	if n.Style.Shadow && n.Kind != graph.KindText && n.Kind != graph.KindContainer && n.Kind != graph.KindSwimlane {
@@ -473,11 +552,30 @@ func paintNodeText(p *ui.Painter, box, textArea ui.Rect, n *graph.Node, col ui.C
 	p.RichText(tx, ty, maxW, spans...)
 }
 
-func paintEdge(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, e *graph.Edge) {
-	pts := st.Page.EdgePoints(e)
-	if len(pts) < 2 {
+func paintVisibleEdge(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, ve graph.VisibleEdge) {
+	e := ve.Edge
+	pts := ve.Points
+	if e == nil || len(pts) < 2 {
 		return
 	}
+	// Separate parallel connectors between the same endpoints cleanly along perpendicular offset.
+	if ve.PairTotal > 1 && len(pts) == 2 {
+		dx := pts[1].X - pts[0].X
+		dy := pts[1].Y - pts[0].Y
+		if l := math.Hypot(dx, dy); l > 1e-3 {
+			slotOff := (float64(ve.PairSlot) - float64(ve.PairTotal-1)/2.0) * 14.0
+			if e.SourceID > e.TargetID {
+				slotOff = -slotOff
+			}
+			nx, ny := -dy/l*slotOff, dx/l*slotOff
+			pts = []geo.Vec{
+				{X: pts[0].X + nx*0.5, Y: pts[0].Y + ny*0.5},
+				{X: (pts[0].X+pts[1].X)/2 + nx*1.4, Y: (pts[0].Y+pts[1].Y)/2 + ny*1.4},
+				{X: pts[1].X + nx*0.5, Y: pts[1].Y + ny*0.5},
+			}
+		}
+	}
+
 	z := float32(st.Cam.Zoom)
 	screen := make([][2]float32, len(pts))
 	for i, pt := range pts {
@@ -502,6 +600,17 @@ func paintEdge(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, e *graph.Ed
 		sw += 0.75 * z
 	}
 
+	// Fast LOD when zoomed far out: hairline polyline only.
+	if !st.Export && z < 0.22 {
+		path := &ui.Path{}
+		path.MoveTo(screen[0][0], screen[0][1])
+		for _, pt := range screen[1:] {
+			path.LineTo(pt[0], pt[1])
+		}
+		p.StrokePath(path, max(1, sw), col)
+		return
+	}
+
 	path := &ui.Path{}
 	if e.Routing == graph.RouteCurved && len(screen) == 2 {
 		a, b := screen[0], screen[1]
@@ -513,6 +622,11 @@ func paintEdge(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, e *graph.Ed
 		} else {
 			path.CubeTo(a[0], a[1]+dy, b[0], b[1]-dy, b[0], b[1])
 		}
+		applyDash(path, e.Style.Dash, sw)
+		p.StrokePath(path, sw, col)
+	} else if e.Routing == graph.RouteCurved && len(screen) == 3 {
+		path.MoveTo(screen[0][0], screen[0][1])
+		path.QuadTo(screen[1][0], screen[1][1], screen[2][0], screen[2][1])
 		applyDash(path, e.Style.Dash, sw)
 		p.StrokePath(path, sw, col)
 	} else {
@@ -532,7 +646,7 @@ func paintEdge(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, e *graph.Ed
 		paintArrowhead(p, screen[1], screen[0], e.StartArrow, col, sw, z)
 	}
 
-	if strings.TrimSpace(e.Label) != "" {
+	if strings.TrimSpace(e.Label) != "" && (st.Export || z >= 0.32) {
 		midWorld := geo.PolylineMidpoint(pts)
 		mx, my := st.Cam.WorldToScreen(r, midWorld)
 		fs := float32(e.Style.FontSize) * z
@@ -589,19 +703,29 @@ func paintArrowhead(p *ui.Painter, from, to [2]float32, kind graph.ArrowStyle, c
 	}
 }
 
-func paintOverlays(p *ui.Painter, r ui.Rect, st SceneState, pal Palette) {
+func paintOverlays(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, idx *graph.SpatialIndex) {
 	z := float32(st.Cam.Zoom)
-	for _, n := range st.Page.Nodes {
-		selected := st.SelectedNodes[n.ID]
-		hovered := st.HoveredNodeID == n.ID
-		if !selected && !hovered {
-			continue
+	// Smart alignment guide lines while dragging nodes
+	if len(st.GuideLines) > 0 {
+		guideCol := ui.Hex("#EF4444").Alpha(0.85)
+		for _, g := range st.GuideLines {
+			if g.Axis == "x" {
+				ax, ay := st.Cam.WorldToScreen(r, geo.V(g.Pos, g.Start))
+				bx, by := st.Cam.WorldToScreen(r, geo.V(g.Pos, g.End))
+				p.Line(ax, ay, bx, by, 1.2, guideCol)
+			} else {
+				ax, ay := st.Cam.WorldToScreen(r, geo.V(g.Start, g.Pos))
+				bx, by := st.Cam.WorldToScreen(r, geo.V(g.End, g.Pos))
+				p.Line(ax, ay, bx, by, 1.2, guideCol)
+			}
 		}
+	}
+
+	paintNodeOverlay := func(n *graph.Node, selected bool) {
 		sx, sy := st.Cam.WorldToScreen(r, geo.V(n.X, n.Y))
 		box := ui.Rect{X: sx, Y: sy, W: float32(n.W) * z, H: float32(n.H) * z}
 		if selected {
 			p.Stroke(ExpandRect(box, 2), pal.Accent, 4, 1.8)
-			// Draw 4 corner resize handles + 4 side anchor ports.
 			hs := float32(7)
 			corners := [4][2]float32{
 				{box.X, box.Y},
@@ -614,10 +738,9 @@ func paintOverlays(p *ui.Painter, r ui.Rect, st SceneState, pal Palette) {
 				p.Fill(hr, ui.Hex("#FFFFFF"), 2)
 				p.Stroke(hr, pal.Accent, 2, 1.5)
 			}
-		} else if hovered {
+		} else {
 			p.Stroke(ExpandRect(box, 1.5), pal.Accent.Alpha(0.55), 4, 1.2)
 		}
-		// Side connection ports on hover or selection.
 		ports := [4][2]float32{
 			{box.X + box.W/2, box.Y},
 			{box.X + box.W, box.Y + box.H/2},
@@ -627,6 +750,17 @@ func paintOverlays(p *ui.Painter, r ui.Rect, st SceneState, pal Palette) {
 		for _, pt := range ports {
 			pr := ui.Rect{X: pt[0] - 3.5, Y: pt[1] - 3.5, W: 7, H: 7}
 			p.Fill(pr, pal.Accent.Alpha(0.85), 3.5)
+		}
+	}
+
+	if st.HoveredNodeID != "" && !st.SelectedNodes[st.HoveredNodeID] {
+		if hn := idx.NodeByIDFast(st.HoveredNodeID); hn != nil {
+			paintNodeOverlay(hn, false)
+		}
+	}
+	for id := range st.SelectedNodes {
+		if sn := idx.NodeByIDFast(id); sn != nil {
+			paintNodeOverlay(sn, true)
 		}
 	}
 

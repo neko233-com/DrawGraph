@@ -7,24 +7,35 @@ import (
 )
 
 func (a *App) handleShortcuts(c *ui.Context) {
-	if a.EditingNodeID != "" {
+	if a.EditingNodeID != "" || a.EditingEdgeID != "" {
 		if c.Shortcut(0, ui.KeyEscape) {
 			a.EditingNodeID = ""
+			a.EditingEdgeID = ""
 		} else if c.Shortcut(0, ui.KeyEnter) {
 			a.commitInlineEdit()
 		}
 		return
 	}
-	if a.PluginsOpen || a.HabitsOpen {
+	if a.PluginsOpen || a.HabitsOpen || a.UpdateOpen || a.PaletteOpen || a.MermaidOpen {
 		if c.Shortcut(0, ui.KeyEscape) {
 			a.PluginsOpen = false
 			a.HabitsOpen = false
+			a.UpdateOpen = false
+			a.PaletteOpen = false
+			a.MermaidOpen = false
 		}
 		return
 	}
 
 	cmd := ui.Cmd
 	shift := ui.Shift
+
+	// Command Palette & Search (Cmd/Ctrl+K or Cmd/Ctrl+F)
+	if c.Shortcut(cmd, ui.KeyK) || c.Shortcut(cmd, ui.KeyF) {
+		a.PaletteQuery = ""
+		a.PaletteOpen = true
+		return
+	}
 
 	// Tools
 	if c.Shortcut(0, ui.KeyV) {
@@ -53,7 +64,7 @@ func (a *App) handleShortcuts(c *ui.Context) {
 		a.Shape = graph.KindText
 	}
 
-	// Undo / Redo / File / Edit
+	// Undo / Redo / File / Clipboard / Edit
 	if c.Shortcut(cmd, ui.KeyZ) {
 		a.Undo()
 	}
@@ -72,8 +83,23 @@ func (a *App) handleShortcuts(c *ui.Context) {
 	if c.Shortcut(cmd, ui.KeyU) {
 		a.ImportMediaFromDialog()
 	}
+	if c.Shortcut(cmd, ui.KeyC) {
+		a.CopySelection()
+	}
+	if c.Shortcut(cmd, ui.KeyX) {
+		a.CutSelection()
+	}
 	if c.Shortcut(cmd, ui.KeyV) {
-		a.PasteClipboardMedia()
+		a.PasteClipboard()
+	}
+	if c.Shortcut(cmd, ui.KeyG) {
+		a.GroupSelection()
+	}
+	if c.Shortcut(cmd|shift, ui.KeyG) {
+		a.UngroupSelection()
+	}
+	if c.Shortcut(cmd, ui.KeyL) {
+		a.ToggleLockSelection()
 	}
 	if c.Shortcut(cmd|shift, ui.KeyH) {
 		a.ResetOrigin()
@@ -91,6 +117,7 @@ func (a *App) handleShortcuts(c *ui.Context) {
 		a.DeleteSelection()
 	}
 	if c.Shortcut(0, ui.KeyEscape) {
+		a.ContextMenuPos = nil
 		a.Tool = ToolSelect
 		a.SelectedNodes = map[string]bool{}
 		a.SelectedEdges = map[string]bool{}
@@ -99,6 +126,10 @@ func (a *App) handleShortcuts(c *ui.Context) {
 		if sel := a.singleSelectedNode(); sel != nil {
 			a.EditingNodeID = sel.ID
 			a.EditingText = sel.Label
+			a.EditFocusSeq++
+		} else if es := a.singleSelectedEdge(); es != nil {
+			a.EditingEdgeID = es.ID
+			a.EditingText = es.Label
 			a.EditFocusSeq++
 		}
 	}
@@ -134,6 +165,7 @@ func (a *App) handleShortcuts(c *ui.Context) {
 				n.Y += dy
 			}
 		}
+		a.Page().MarkDirty()
 		a.notifyChanged()
 	}
 	step := a.Doc().GridSize

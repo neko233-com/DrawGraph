@@ -16,7 +16,7 @@ import (
 
 // Options configures one-click formatting behavior.
 type Options struct {
-	Direction        string             `json:"direction"` // "LR" or "TB"
+	Direction        string             `json:"direction"` // "LR", "RL", "TB", or "BT"
 	GapX             float64            `json:"gapX"`
 	GapY             float64            `json:"gapY"`
 	GridSize         float64            `json:"gridSize"`
@@ -29,7 +29,7 @@ type Options struct {
 	ClearWaypoints   bool               `json:"clearWaypoints"`
 	StartX           float64            `json:"startX"`
 	StartY           float64            `json:"startY"`
-	Strategy         string             `json:"strategy,omitempty"` // "layered" (default) or custom registered strategy
+	Strategy         string             `json:"strategy,omitempty"` // "layered" (default), "tree", "grid", "radial", "swimlane", "compact", or custom
 }
 
 // Strategy implements a pluggable diagram formatting/layout algorithm.
@@ -63,6 +63,10 @@ func OptionsFromHabits(p *habits.Profile, dark bool) Options {
 	if p == nil {
 		p = habits.DefaultProfile()
 	}
+	strat := p.DefaultStrategy
+	if strat == "" {
+		strat = "layered"
+	}
 	return Options{
 		Direction:        p.PreferredDirection,
 		GapX:             p.GapX,
@@ -77,6 +81,7 @@ func OptionsFromHabits(p *habits.Profile, dark bool) Options {
 		ClearWaypoints:   true,
 		StartX:           80,
 		StartY:           80,
+		Strategy:         strat,
 	}
 }
 
@@ -89,20 +94,14 @@ type Report struct {
 	Layers            int    `json:"layers"`
 	Direction         string `json:"direction"`
 	Preset            string `json:"preset"`
+	Strategy          string `json:"strategy"`
 }
 
-// FormatPage performs one-click elegant layout, edge routing, container wrapping, and styling.
-func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
-	if page == nil {
-		return Report{}
-	}
-	if strat := strings.ToLower(strings.TrimSpace(opts.Strategy)); strat != "" && strat != "layered" {
-		if fn, ok := customStrategies[strat]; ok {
-			return fn(doc, page, opts)
-		}
-	}
-	var rep Report
-	if opts.Direction != "LR" && opts.Direction != "TB" {
+func normalizeOptions(doc *graph.Document, opts Options) Options {
+	opts.Direction = strings.ToUpper(strings.TrimSpace(opts.Direction))
+	switch opts.Direction {
+	case "LR", "RL", "TB", "BT":
+	default:
 		opts.Direction = "LR"
 	}
 	if opts.GapX <= 0 {
@@ -127,8 +126,37 @@ func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
 	if opts.StartY == 0 {
 		opts.StartY = 80
 	}
+	if strings.TrimSpace(opts.Strategy) == "" {
+		opts.Strategy = "layered"
+	}
+	return opts
+}
+
+func isHorizontalDir(dir string) bool {
+	return dir == "LR" || dir == "RL"
+}
+
+// FormatPage performs one-click elegant layout, edge routing, container wrapping, and styling.
+func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
+	if page == nil {
+		return Report{}
+	}
+	opts = normalizeOptions(doc, opts)
+	strat := strings.ToLower(strings.TrimSpace(opts.Strategy))
+	if strat != "" && strat != "layered" {
+		if fn, ok := customStrategies[strat]; ok {
+			rep := fn(doc, page, opts)
+			if rep.Strategy == "" {
+				rep.Strategy = strat
+			}
+			page.MarkDirty()
+			return rep
+		}
+	}
+	var rep Report
 	rep.Direction = opts.Direction
 	rep.Preset = opts.Preset
+	rep.Strategy = "layered"
 
 	// 1. Harmonize typography, sizes, and palette before computing layer bounds.
 	preset := habits.PresetByID(opts.Preset)
@@ -150,6 +178,7 @@ func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
 		layoutNodes = append(layoutNodes, n)
 	}
 	if len(layoutNodes) == 0 {
+		page.MarkDirty()
 		return rep
 	}
 	sort.Slice(layoutNodes, func(i, j int) bool { return layoutNodes[i].ID < layoutNodes[j].ID })
@@ -204,7 +233,6 @@ func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
 			}
 		}
 	}
-	// Initial deterministic sort within each layer by ParentID then ID.
 	for r := range layers {
 		sort.Slice(layers[r], func(i, j int) bool {
 			if layers[r][i].ParentID != layers[r][j].ParentID {
@@ -226,14 +254,18 @@ func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
 		}
 	}
 
-	// 5. Assign coordinates centered along the cross axis and snapped to GridSize.
+	// 5. Assign coordinates centered along cross axis & cluster sibling container groups cleanly.
+	horiz := isHorizontalDir(opts.Direction)
 	layerDepths := make([]float64, len(layers))
 	layerCrossSpans := make([]float64, len(layers))
 	maxCrossSpan := 0.0
 	for r, layer := range layers {
 		var depth, cross float64
 		for i, n := range layer {
-			if opts.Direction == "LR" {
+			if i > 0 && layer[i-1].ParentID != n.ParentID && (layer[i-1].ParentID != "" || n.ParentID != "") {
+				cross += opts.ContainerPadding * 1.15
+			}
+			if horiz {
 				depth = math.Max(depth, n.W)
 				cross += n.H
 				if i > 0 {
@@ -252,26 +284,25 @@ func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
 		maxCrossSpan = math.Max(maxCrossSpan, cross)
 	}
 
-	// Extra gap when adjacent siblings belong to different containers so containers never collide.
 	cursorMain := opts.StartX
-	if opts.Direction == "TB" {
+	if !horiz {
 		cursorMain = opts.StartY
 	}
 	for r, layer := range layers {
 		crossStart := opts.StartY + (maxCrossSpan-layerCrossSpans[r])/2
-		if opts.Direction == "TB" {
+		if !horiz {
 			crossStart = opts.StartX + (maxCrossSpan-layerCrossSpans[r])/2
 		}
 		curCross := crossStart
 		for i, n := range layer {
 			if i > 0 && layer[i-1].ParentID != n.ParentID && (layer[i-1].ParentID != "" || n.ParentID != "") {
-				curCross += opts.ContainerPadding * 0.75
+				curCross += opts.ContainerPadding * 1.15
 			}
 			if n.Locked {
 				continue
 			}
 			var targetX, targetY float64
-			if opts.Direction == "LR" {
+			if horiz {
 				targetX = geo.Snap(cursorMain+(layerDepths[r]-n.W)/2, opts.GridSize)
 				targetY = geo.Snap(curCross, opts.GridSize)
 				curCross += n.H + opts.GapY
@@ -286,48 +317,97 @@ func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
 				rep.MovedNodes++
 			}
 		}
-		if opts.Direction == "LR" {
+		if horiz {
 			cursorMain += layerDepths[r] + opts.GapX
 		} else {
 			cursorMain += layerDepths[r] + opts.GapY
 		}
 	}
 
-	// 6. Auto-fit container and swimlane bounds around their children.
-	for _, n := range page.Nodes {
-		if n.Kind != graph.KindContainer && n.Kind != graph.KindSwimlane {
+	if opts.Direction == "RL" || opts.Direction == "BT" {
+		mirrorLayoutDirection(layoutNodes, opts)
+	}
+	finishLayout(doc, page, opts, preset, &rep)
+	return rep
+}
+
+func mirrorLayoutDirection(nodes []*graph.Node, opts Options) {
+	if len(nodes) == 0 {
+		return
+	}
+	minX, maxX := nodes[0].X, nodes[0].X+nodes[0].W
+	minY, maxY := nodes[0].Y, nodes[0].Y+nodes[0].H
+	for _, n := range nodes[1:] {
+		minX = math.Min(minX, n.X)
+		maxX = math.Max(maxX, n.X+n.W)
+		minY = math.Min(minY, n.Y)
+		maxY = math.Max(maxY, n.Y+n.H)
+	}
+	for _, n := range nodes {
+		if n.Locked {
 			continue
 		}
-		var childBox geo.Box
-		hasChild := false
-		for _, ch := range page.Nodes {
-			if ch.ParentID == n.ID {
-				if !hasChild {
-					childBox = ch.Box()
-					hasChild = true
-				} else {
-					childBox = childBox.Union(ch.Box())
+		if opts.Direction == "RL" {
+			n.X = geo.Snap(minX+(maxX-n.X-n.W), opts.GridSize)
+		} else if opts.Direction == "BT" {
+			n.Y = geo.Snap(minY+(maxY-n.Y-n.H), opts.GridSize)
+		}
+	}
+}
+
+func finishLayout(doc *graph.Document, page *graph.Page, opts Options, preset habits.Preset, rep *Report) {
+	nodeMap := make(map[string]*graph.Node, len(page.Nodes))
+	for _, n := range page.Nodes {
+		nodeMap[n.ID] = n
+	}
+
+	// 6. Auto-fit container and swimlane bounds bottom-up so nested containers enclose children cleanly.
+	var containers []*graph.Node
+	for _, n := range page.Nodes {
+		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
+			containers = append(containers, n)
+		}
+	}
+	for pass := 0; pass < max(1, len(containers)); pass++ {
+		changedAny := false
+		for _, n := range containers {
+			var childBox geo.Box
+			hasChild := false
+			for _, ch := range page.Nodes {
+				if ch.ParentID == n.ID {
+					if !hasChild {
+						childBox = ch.Box()
+						hasChild = true
+					} else {
+						childBox = childBox.Union(ch.Box())
+					}
 				}
 			}
+			if !hasChild {
+				continue
+			}
+			headerPad := 28.0
+			if n.Kind == graph.KindSwimlane {
+				headerPad = 42.0
+			}
+			nx := geo.Snap(childBox.X-opts.ContainerPadding, opts.GridSize)
+			ny := geo.Snap(childBox.Y-opts.ContainerPadding-headerPad, opts.GridSize)
+			nw := geo.Snap(childBox.W+opts.ContainerPadding*2, opts.GridSize)
+			nh := geo.Snap(childBox.H+opts.ContainerPadding*2+headerPad, opts.GridSize)
+			if n.X != nx || n.Y != ny || n.W != nw || n.H != nh {
+				n.X, n.Y, n.W, n.H = nx, ny, nw, nh
+				if pass == 0 {
+					rep.ResizedContainers++
+				}
+				changedAny = true
+			}
 		}
-		if !hasChild {
-			continue
-		}
-		headerPad := 28.0
-		if n.Kind == graph.KindSwimlane {
-			headerPad = 42.0
-		}
-		nx := geo.Snap(childBox.X-opts.ContainerPadding, opts.GridSize)
-		ny := geo.Snap(childBox.Y-opts.ContainerPadding-headerPad, opts.GridSize)
-		nw := geo.Snap(childBox.W+opts.ContainerPadding*2, opts.GridSize)
-		nh := geo.Snap(childBox.H+opts.ContainerPadding*2+headerPad, opts.GridSize)
-		if n.X != nx || n.Y != ny || n.W != nw || n.H != nh {
-			n.X, n.Y, n.W, n.H = nx, ny, nw, nh
-			rep.ResizedContainers++
+		if !changedAny {
+			break
 		}
 	}
 
-	// 7. Re-route edges cleanly using optimal anchors for Direction.
+	// 7. Re-route edges cleanly using optimal anchors.
 	for _, e := range page.Edges {
 		if opts.Routing != "" {
 			e.Routing = opts.Routing
@@ -340,7 +420,9 @@ func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
 		if src == nil || dst == nil {
 			continue
 		}
-		if opts.Direction == "LR" {
+		dx := dst.Box().Center().X - src.Box().Center().X
+		dy := dst.Box().Center().Y - src.Box().Center().Y
+		if math.Abs(dx) >= math.Abs(dy) {
 			if src.X+src.W <= dst.X+10 {
 				e.SourceAnchor = geo.AnchorRight
 				e.TargetAnchor = geo.AnchorLeft
@@ -382,7 +464,7 @@ func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
 		doc.GridSize = opts.GridSize
 		doc.Touch()
 	}
-	return rep
+	page.MarkDirty()
 }
 
 func harmonizeNodes(page *graph.Page, preset habits.Preset, dark bool) int {

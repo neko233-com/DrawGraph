@@ -178,18 +178,19 @@ func RenderSVG(doc *graph.Document, pageID string, reg *icons.Registry, dark boo
 		box.W, box.H, box.X, box.Y, box.W, box.H)
 	b.WriteString(`<defs>` + "\n")
 	fmt.Fprintf(&b, `  <marker id="dg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="%s"/></marker>`+"\n", defaultEdge)
-	b.WriteString(`  <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}</style>` + "\n")
+	b.WriteString(`  <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Roboto,sans-serif;}</style>` + "\n")
 	b.WriteString(`</defs>` + "\n")
 	fmt.Fprintf(&b, `<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s"/>`+"\n", box.X, box.Y, box.W, box.H, html.EscapeString(bg))
 
-	sorted := page.SortedNodes()
+	idx := page.EnsureIndex()
+	sorted := idx.Sorted()
 	for _, n := range sorted {
 		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
 			writeSVGNode(&b, doc, n, reg, defaultFill, defaultStroke, defaultText, dark)
 		}
 	}
-	for _, e := range page.Edges {
-		writeSVGEdge(&b, page, e, defaultEdge, bg, defaultText)
+	for _, ve := range idx.QueryEdges(page, box) {
+		writeSVGVisibleEdge(&b, ve, defaultEdge, bg, defaultText)
 	}
 	for _, n := range sorted {
 		if n.Kind != graph.KindContainer && n.Kind != graph.KindSwimlane {
@@ -357,10 +358,27 @@ func writeSVGNode(b *strings.Builder, doc *graph.Document, n *graph.Node, reg *i
 	}
 }
 
-func writeSVGEdge(b *strings.Builder, p *graph.Page, e *graph.Edge, defEdge, labelBG, labelText string) {
-	pts := p.EdgePoints(e)
-	if len(pts) < 2 {
+func writeSVGVisibleEdge(b *strings.Builder, ve graph.VisibleEdge, defEdge, labelBG, labelText string) {
+	e := ve.Edge
+	pts := ve.Points
+	if e == nil || len(pts) < 2 {
 		return
+	}
+	if ve.PairTotal > 1 && len(pts) == 2 {
+		dx := pts[1].X - pts[0].X
+		dy := pts[1].Y - pts[0].Y
+		if l := math.Hypot(dx, dy); l > 1e-3 {
+			slotOff := (float64(ve.PairSlot) - float64(ve.PairTotal-1)/2.0) * 14.0
+			if e.SourceID > e.TargetID {
+				slotOff = -slotOff
+			}
+			nx, ny := -dy/l*slotOff, dx/l*slotOff
+			pts = []geo.Vec{
+				{X: pts[0].X + nx*0.5, Y: pts[0].Y + ny*0.5},
+				{X: (pts[0].X+pts[1].X)/2 + nx*1.4, Y: (pts[0].Y+pts[1].Y)/2 + ny*1.4},
+				{X: pts[1].X + nx*0.5, Y: pts[1].Y + ny*0.5},
+			}
+		}
 	}
 	col := firstStr(e.Style.Stroke, defEdge)
 	sw := e.Style.StrokeWidth
@@ -369,11 +387,16 @@ func writeSVGEdge(b *strings.Builder, p *graph.Page, e *graph.Edge, defEdge, lab
 	}
 	marker := ""
 	if e.EndArrow != "" && e.EndArrow != graph.ArrowNone {
-		marker = ` marker-end="url(#dg-arrow)"`
+		marker += ` marker-end="url(#dg-arrow)"`
+	}
+	if e.StartArrow != "" && e.StartArrow != graph.ArrowNone {
+		marker += ` marker-start="url(#dg-arrow)"`
 	}
 	dashAttr := ""
 	if e.Style.Dash == graph.DashDashed {
 		dashAttr = ` stroke-dasharray="6,4"`
+	} else if e.Style.Dash == graph.DashDotted {
+		dashAttr = ` stroke-dasharray="2,4"`
 	}
 	if e.Routing == graph.RouteCurved && len(pts) == 2 {
 		a, c := pts[0], pts[1]
@@ -385,6 +408,10 @@ func writeSVGEdge(b *strings.Builder, p *graph.Page, e *graph.Edge, defEdge, lab
 		} else {
 			d = fmt.Sprintf("M %.2f %.2f C %.2f %.2f, %.2f %.2f, %.2f %.2f", a.X, a.Y, a.X, a.Y+dy, c.X, c.Y-dy, c.X, c.Y)
 		}
+		fmt.Fprintf(b, `<path d="%s" fill="none" stroke="%s" stroke-width="%.2f"%s%s/>`+"\n",
+			d, esc(col), sw, dashAttr, marker)
+	} else if e.Routing == graph.RouteCurved && len(pts) == 3 {
+		d := fmt.Sprintf("M %.2f %.2f Q %.2f %.2f, %.2f %.2f", pts[0].X, pts[0].Y, pts[1].X, pts[1].Y, pts[2].X, pts[2].Y)
 		fmt.Fprintf(b, `<path d="%s" fill="none" stroke="%s" stroke-width="%.2f"%s%s/>`+"\n",
 			d, esc(col), sw, dashAttr, marker)
 	} else {

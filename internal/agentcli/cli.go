@@ -19,11 +19,14 @@ import (
 	"github.com/neko233-com/DrawGraph/internal/export"
 	"github.com/neko233-com/DrawGraph/internal/graph"
 	"github.com/neko233-com/DrawGraph/internal/habits"
+	"github.com/neko233-com/DrawGraph/internal/i18n"
 	"github.com/neko233-com/DrawGraph/internal/icons"
 	"github.com/neko233-com/DrawGraph/internal/ipc"
 	"github.com/neko233-com/DrawGraph/internal/layout"
+	"github.com/neko233-com/DrawGraph/internal/mcp"
 	"github.com/neko233-com/DrawGraph/internal/media"
-	"github.com/neko233-com/DrawGraph/internal/render"
+	"github.com/neko233-com/DrawGraph/internal/mermaid"
+	"github.com/neko233-com/DrawGraph/internal/ops"
 	"github.com/neko233-com/DrawGraph/internal/update"
 	"github.com/neko233-com/DrawGraph/internal/version"
 )
@@ -92,12 +95,16 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdConnect(rest, hb, stdout, stderr)
 	case "disconnect":
 		return cmdDisconnect(rest, stdout, stderr)
+	case "align":
+		return cmdAlign(rest, stdout, stderr)
 	case "page":
 		return cmdPage(rest, stdout, stderr)
 	case "batch":
 		return cmdBatch(rest, hb, stdin, stdout, stderr)
 	case "dsl":
 		return cmdDSL(rest, hb, stdin, stdout, stderr)
+	case "mermaid":
+		return cmdMermaid(rest, hb, stdin, stdout, stderr)
 	case "format":
 		return cmdFormat(rest, hb, stdout, stderr)
 	case "import":
@@ -112,39 +119,15 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdUpdate(rest, hb, stdout, stderr)
 	case "live":
 		return cmdLive(rest, stdout, stderr)
+	case "mcp":
+		return cmdMCP(rest, reg, hb, stdin, stdout, stderr)
 	default:
 		return emitErr(stdout, stderr, hasJSONFlag(rest), cmd, fmt.Errorf("unknown command %q (run `drawgraph --help`)", cmd), 2)
 	}
 }
 
 func cmdSchema(args []string, reg *icons.Registry, stdout io.Writer) int {
-	var packIDs []string
-	for _, p := range reg.Packs() {
-		packIDs = append(packIDs, fmt.Sprintf("%s (%d icons)", p.ID, len(p.Icons)))
-	}
-	presets := make([]string, 0)
-	for _, pr := range habits.BuiltinPresets() {
-		presets = append(presets, pr.ID)
-	}
-	schema := map[string]any{
-		"schemaVersion":    1,
-		"tool":             "drawgraph",
-		"version":          version.Version,
-		"nodeKinds":        graph.AllNodeKinds,
-		"customShapes":     render.RegisteredShapes(),
-		"layoutStrategies": layout.RegisteredStrategies(),
-		"exportFormats":    export.SupportedExtensions(),
-		"routings":         []graph.RoutingStyle{graph.RouteOrthogonal, graph.RouteStraight, graph.RouteCurved},
-		"arrows":           []graph.ArrowStyle{graph.ArrowClassic, graph.ArrowOpen, graph.ArrowDiamond, graph.ArrowCircle, graph.ArrowNone},
-		"presets":          presets,
-		"iconPacks":        packIDs,
-		"commands": []string{
-			"new", "inspect", "validate", "add-node", "add-image", "add-video", "update-node", "remove-node",
-			"connect", "disconnect", "page", "batch", "dsl", "format",
-			"import", "export", "icon", "habits", "update", "live", "schema", "skill",
-		},
-	}
-	return emitResult(stdout, true, "schema", schema, "")
+	return emitResult(stdout, true, "schema", ops.CapabilitiesSchema(reg), "")
 }
 
 func cmdSkill(args []string, stdout, stderr io.Writer) int {
@@ -176,14 +159,14 @@ func cmdNew(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	title := fs.String("title", "", "diagram title")
-	tpl := fs.String("template", "blank", "template: blank | arch | flow")
+	tpl := fs.String("template", "blank", "template: blank | arch | flow | microservices | org")
 	jsonOut := fs.Bool("json", false, "output JSON")
 	live := fs.Bool("live", false, "also push to running GUI window")
 	if err := fs.Parse(reorderFlags(args)); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		return emitErr(stdout, stderr, *jsonOut, "new", fmt.Errorf("usage: drawgraph new <file.drawgraph> [--template blank|arch|flow]"), 2)
+		return emitErr(stdout, stderr, *jsonOut, "new", fmt.Errorf("usage: drawgraph new <file.drawgraph> [--template blank|arch|flow|microservices|org]"), 2)
 	}
 	file := fs.Arg(0)
 	t := *title
@@ -194,14 +177,8 @@ func cmdNew(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 	hb.ApplyToDocument(doc)
 
 	p := doc.ActivePage()
-	switch strings.ToLower(*tpl) {
-	case "arch":
-		_ = applyArchTemplate(doc, p, hb)
-	case "flow":
-		_ = applyFlowTemplate(doc, p, hb)
-	case "blank", "":
-	default:
-		return emitErr(stdout, stderr, *jsonOut, "new", fmt.Errorf("unknown template %q", *tpl), 2)
+	if err := ops.ApplyTemplate(doc, p, *tpl, hb); err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "new", err, 2)
 	}
 
 	if err := saveDoc(file, doc, *live, "new"); err != nil {
@@ -720,26 +697,6 @@ func cmdPage(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-type batchOp struct {
-	Op       string         `json:"op"`
-	ID       string         `json:"id,omitempty"`
-	Kind     graph.NodeKind `json:"kind,omitempty"`
-	Label    string         `json:"label,omitempty"`
-	Sublabel string         `json:"sublabel,omitempty"`
-	Icon     string         `json:"icon,omitempty"`
-	ParentID string         `json:"parentId,omitempty"`
-	From     string         `json:"from,omitempty"`
-	To       string         `json:"to,omitempty"`
-	Routing  string         `json:"routing,omitempty"`
-	Arrow    string         `json:"arrow,omitempty"`
-	Fill     string         `json:"fill,omitempty"`
-	Stroke   string         `json:"stroke,omitempty"`
-	X        *float64       `json:"x,omitempty"`
-	Y        *float64       `json:"y,omitempty"`
-	W        *float64       `json:"w,omitempty"`
-	H        *float64       `json:"h,omitempty"`
-}
-
 func cmdBatch(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("batch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -767,8 +724,8 @@ func cmdBatch(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr i
 	if err != nil {
 		return emitErr(stdout, stderr, *jsonOut, "batch", err, 1)
 	}
-	var ops []batchOp
-	if err := json.Unmarshal(raw, &ops); err != nil {
+	var opsList []ops.BatchOp
+	if err := json.Unmarshal(raw, &opsList); err != nil {
 		return emitErr(stdout, stderr, *jsonOut, "batch", fmt.Errorf("parse batch ops JSON: %w", err), 2)
 	}
 
@@ -780,99 +737,8 @@ func cmdBatch(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr i
 	if err != nil {
 		return emitErr(stdout, stderr, *jsonOut, "batch", err, 2)
 	}
-	for i, op := range ops {
-		switch op.Op {
-		case "add_node":
-			x, y := 80.0, 80.0
-			if op.X != nil {
-				x = *op.X
-			}
-			if op.Y != nil {
-				y = *op.Y
-			}
-			n := hb.NewNodeFromHabits(op.Kind, op.Label, x, y)
-			if op.ID != "" {
-				n.ID = op.ID
-			}
-			n.Sublabel = op.Sublabel
-			n.ParentID = op.ParentID
-			if op.Icon != "" {
-				n.Icon = graph.ParseIconRef(op.Icon)
-			}
-			if op.Fill != "" {
-				n.Style.Fill = op.Fill
-			}
-			if op.Stroke != "" {
-				n.Style.Stroke = op.Stroke
-			}
-			if op.W != nil {
-				n.W = *op.W
-			}
-			if op.H != nil {
-				n.H = *op.H
-			}
-			if err := p.AddNode(n); err != nil {
-				return emitErr(stdout, stderr, *jsonOut, "batch", fmt.Errorf("op[%d] add_node: %w", i, err), 2)
-			}
-		case "update_node":
-			n := p.NodeByID(op.ID)
-			if n == nil {
-				return emitErr(stdout, stderr, *jsonOut, "batch", fmt.Errorf("op[%d]: node %q not found", i, op.ID), 2)
-			}
-			if op.Label != "" {
-				n.Label = op.Label
-			}
-			if op.Sublabel != "" {
-				n.Sublabel = op.Sublabel
-			}
-			if op.Icon != "" {
-				n.Icon = graph.ParseIconRef(op.Icon)
-			}
-			if op.Fill != "" {
-				n.Style.Fill = op.Fill
-			}
-			if op.Stroke != "" {
-				n.Style.Stroke = op.Stroke
-			}
-			if op.X != nil {
-				n.X = *op.X
-			}
-			if op.Y != nil {
-				n.Y = *op.Y
-			}
-			if op.W != nil {
-				n.W = *op.W
-			}
-			if op.H != nil {
-				n.H = *op.H
-			}
-		case "remove_node":
-			if !p.RemoveNode(op.ID) {
-				return emitErr(stdout, stderr, *jsonOut, "batch", fmt.Errorf("op[%d]: node %q not found", i, op.ID), 2)
-			}
-		case "connect":
-			e := hb.NewEdgeFromHabits(op.From, op.To, op.Label)
-			if op.ID != "" {
-				e.ID = op.ID
-			}
-			if op.Routing != "" {
-				e.Routing = graph.RoutingStyle(op.Routing)
-			}
-			if op.Arrow != "" {
-				e.EndArrow = graph.ArrowStyle(op.Arrow)
-			}
-			if err := p.AddEdge(e); err != nil {
-				return emitErr(stdout, stderr, *jsonOut, "batch", fmt.Errorf("op[%d] connect: %w", i, err), 2)
-			}
-		case "disconnect":
-			if !p.RemoveEdge(op.ID) {
-				return emitErr(stdout, stderr, *jsonOut, "batch", fmt.Errorf("op[%d]: edge %q not found", i, op.ID), 2)
-			}
-		case "format":
-			layout.FormatPage(doc, p, layout.OptionsFromHabits(hb.Snapshot(), false))
-		default:
-			return emitErr(stdout, stderr, *jsonOut, "batch", fmt.Errorf("op[%d]: unknown op %q", i, op.Op), 2)
-		}
+	if err := ops.ExecuteBatchOps(doc, p, opsList, hb); err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "batch", err, 2)
 	}
 	if *autoFormat {
 		layout.FormatPage(doc, p, layout.OptionsFromHabits(hb.Snapshot(), false))
@@ -883,8 +749,8 @@ func cmdBatch(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr i
 		}
 	}
 	return emitResult(stdout, *jsonOut, "batch", map[string]any{
-		"file": file, "ops": len(ops), "nodes": len(p.Nodes), "edges": len(p.Edges), "dryRun": *dryRun,
-	}, fmt.Sprintf("Applied %d ops to %s (%d nodes, %d edges)\n", len(ops), file, len(p.Nodes), len(p.Edges)))
+		"file": file, "ops": len(opsList), "nodes": len(p.Nodes), "edges": len(p.Edges), "dryRun": *dryRun,
+	}, fmt.Sprintf("Applied %d ops to %s (%d nodes, %d edges)\n", len(opsList), file, len(p.Nodes), len(p.Edges)))
 }
 
 func cmdDSL(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -894,7 +760,8 @@ func cmdDSL(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr io.
 	dslFile := fs.String("dsl-file", "", "DSL text file")
 	useStdin := fs.Bool("stdin", false, "read DSL from stdin")
 	autoFormat := fs.Bool("format", true, "auto-format after applying DSL")
-	dir := fs.String("direction", "", "LR | TB layout direction")
+	strategy := fs.String("strategy", "", "layered | tree | grid | radial | swimlane | compact")
+	dir := fs.String("direction", "", "LR | RL | TB | BT layout direction")
 	live := fs.Bool("live", false, "push to live GUI")
 	jsonOut := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(reorderFlags(args)); err != nil {
@@ -928,8 +795,11 @@ func cmdDSL(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr io.
 	}
 	if *autoFormat {
 		opts := layout.OptionsFromHabits(hb.Snapshot(), false)
-		if *dir == "LR" || *dir == "TB" {
-			opts.Direction = *dir
+		if *strategy != "" {
+			opts.Strategy = *strategy
+		}
+		if *dir != "" {
+			opts.Direction = strings.ToUpper(*dir)
 		}
 		layout.FormatPage(doc, p, opts)
 	}
@@ -941,13 +811,106 @@ func cmdDSL(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr io.
 	}, fmt.Sprintf("DSL applied to %s (+%d nodes, +%d edges)\n", file, addedN, addedE))
 }
 
+func cmdMermaid(args []string, hb *habits.Store, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("mermaid", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	mmdFile := fs.String("mermaid-file", "", "Mermaid source file")
+	useStdin := fs.Bool("stdin", false, "read Mermaid source from stdin")
+	strategy := fs.String("strategy", "", "optional layout strategy override")
+	dir := fs.String("direction", "", "LR | RL | TB | BT override")
+	live := fs.Bool("live", false, "push to live GUI")
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(reorderFlags(args)); err != nil {
+		return 2
+	}
+	if fs.NArg() < 1 {
+		return emitErr(stdout, stderr, *jsonOut, "mermaid", fmt.Errorf("usage: drawgraph mermaid <out.drawgraph> [--mermaid-file in.mmd | --stdin]"), 2)
+	}
+	file := fs.Arg(0)
+	var raw []byte
+	var err error
+	if *useStdin || *mmdFile == "" {
+		raw, err = io.ReadAll(stdin)
+	} else {
+		raw, err = os.ReadFile(*mmdFile)
+	}
+	if err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "mermaid", err, 1)
+	}
+	doc, err := mermaid.Parse(string(raw), hb)
+	if err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "mermaid", err, 2)
+	}
+	p := doc.ActivePage()
+	if *strategy != "" || *dir != "" {
+		opts := layout.OptionsFromHabits(hb.Snapshot(), false)
+		if *strategy != "" {
+			opts.Strategy = *strategy
+		}
+		if *dir != "" {
+			opts.Direction = strings.ToUpper(*dir)
+		}
+		layout.FormatPage(doc, p, opts)
+	}
+	if err := saveDoc(file, doc, *live, "mermaid"); err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "mermaid", err, 1)
+	}
+	return emitResult(stdout, *jsonOut, "mermaid", map[string]any{
+		"file": file, "nodes": len(p.Nodes), "edges": len(p.Edges),
+	}, fmt.Sprintf("Imported Mermaid into %s (%d nodes, %d edges)\n", file, len(p.Nodes), len(p.Edges)))
+}
+
+func cmdAlign(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("align", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	pageID := fs.String("page", "", "page id")
+	idsStr := fs.String("ids", "", "comma-separated node IDs (default: all nodes)")
+	mode := fs.String("mode", "left", "left|center-x|right|top|center-y|bottom|distribute-h|distribute-v")
+	live := fs.Bool("live", false, "push to live GUI")
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(reorderFlags(args)); err != nil {
+		return 2
+	}
+	if fs.NArg() < 1 {
+		return emitErr(stdout, stderr, *jsonOut, "align", fmt.Errorf("usage: drawgraph align <file> --ids a,b,c --mode left"), 2)
+	}
+	file := fs.Arg(0)
+	doc, err := loadAnyDoc(file)
+	if err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "align", err, 1)
+	}
+	p, err := selectPage(doc, *pageID)
+	if err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "align", err, 2)
+	}
+	var ids []string
+	if strings.TrimSpace(*idsStr) != "" {
+		for _, part := range strings.Split(*idsStr, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				ids = append(ids, s)
+			}
+		}
+	} else {
+		for _, n := range p.Nodes {
+			ids = append(ids, n.ID)
+		}
+	}
+	changed := graph.AlignNodes(p, ids, graph.AlignMode(*mode))
+	if err := saveDoc(file, doc, *live, "align"); err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "align", err, 1)
+	}
+	return emitResult(stdout, *jsonOut, "align", map[string]any{"changed": changed, "mode": *mode, "count": len(ids)},
+		fmt.Sprintf("Aligned %d nodes (%s)\n", len(ids), *mode))
+}
+
 func cmdFormat(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("format", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	pageID := fs.String("page", "", "page id")
-	dir := fs.String("direction", "", "LR | TB")
+	strategy := fs.String("strategy", "", "layered | tree | grid | radial | swimlane | compact")
+	dir := fs.String("direction", "", "LR | RL | TB | BT")
 	routing := fs.String("routing", "", "orthogonal | straight | curved")
-	preset := fs.String("preset", "", "lobe-clean | drawio-classic | blueprint | slate-mono")
+	preset := fs.String("preset", "", "lobe-clean | drawio-classic | blueprint | slate-mono | vibrant-tech | warm-paper")
 	dark := fs.Bool("dark", false, "harmonize colors for dark theme")
 	gapX := fs.Float64("gap-x", 0, "horizontal gap")
 	gapY := fs.Float64("gap-y", 0, "vertical gap")
@@ -959,7 +922,7 @@ func cmdFormat(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		return emitErr(stdout, stderr, *jsonOut, "format", fmt.Errorf("usage: drawgraph format <file> [--direction LR|TB]"), 2)
+		return emitErr(stdout, stderr, *jsonOut, "format", fmt.Errorf("usage: drawgraph format <file> [--strategy layered|tree|grid|radial|swimlane|compact] [--direction LR|RL|TB|BT]"), 2)
 	}
 	file := fs.Arg(0)
 	doc, err := loadAnyDoc(file)
@@ -971,6 +934,9 @@ func cmdFormat(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 		return emitErr(stdout, stderr, *jsonOut, "format", err, 2)
 	}
 	opts := layout.OptionsFromHabits(hb.Snapshot(), *dark)
+	if *strategy != "" {
+		opts.Strategy = *strategy
+	}
 	if *dir != "" {
 		opts.Direction = strings.ToUpper(*dir)
 	}
@@ -992,12 +958,17 @@ func cmdFormat(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 	rep := layout.FormatPage(doc, p, opts)
 	if *remember {
 		hb.RecordFormatHabit(opts.Direction, opts.Routing, opts.Preset, opts.GapX, opts.GapY, opts.GridSize)
+		_ = hb.Update(func(pr *habits.Profile) {
+			if opts.Strategy != "" {
+				pr.DefaultStrategy = opts.Strategy
+			}
+		})
 	}
 	if err := saveDoc(file, doc, *live, "format"); err != nil {
 		return emitErr(stdout, stderr, *jsonOut, "format", err, 1)
 	}
-	return emitResult(stdout, *jsonOut, "format", rep, fmt.Sprintf("Formatted %s (%s, %d layers, %d moved, %d edges rerouted)\n",
-		file, rep.Direction, rep.Layers, rep.MovedNodes, rep.ReroutedEdges))
+	return emitResult(stdout, *jsonOut, "format", rep, fmt.Sprintf("Formatted %s (%s %s, %d layers, %d moved, %d edges rerouted)\n",
+		file, rep.Strategy, rep.Direction, rep.Layers, rep.MovedNodes, rep.ReroutedEdges))
 }
 
 func cmdImport(args []string, stdout, stderr io.Writer) int {
@@ -1224,7 +1195,10 @@ func cmdHabits(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 		fs.SetOutput(stderr)
 		theme := fs.String("theme", "", "auto | light | dark")
 		preset := fs.String("preset", "", "style preset")
-		dir := fs.String("direction", "", "LR | TB")
+		lang := fs.String("language", "", "auto | en | zh-CN | zh-TW | ja | ko")
+		strategy := fs.String("strategy", "", "layered | tree | grid | radial | swimlane | compact")
+		wheelMode := fs.String("wheel-mode", "", "pan | zoom")
+		dir := fs.String("direction", "", "LR | RL | TB | BT")
 		routing := fs.String("routing", "", "orthogonal | straight | curved")
 		arrow := fs.String("arrow", "", "arrow | open | diamond | circle | none")
 		fill := fs.String("fill", "", "default fill hex")
@@ -1242,11 +1216,20 @@ func cmdHabits(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 			if *theme != "" {
 				p.ThemeMode = *theme
 			}
+			if *lang != "" {
+				p.Language = i18n.NormalizeTag(*lang)
+			}
+			if *strategy != "" {
+				p.DefaultStrategy = *strategy
+			}
+			if *wheelMode == "pan" || *wheelMode == "zoom" {
+				p.WheelMode = *wheelMode
+			}
 			if *preset != "" {
 				p.StylePreset = *preset
 			}
-			if *dir == "LR" || *dir == "TB" {
-				p.PreferredDirection = *dir
+			if d := strings.ToUpper(*dir); d == "LR" || d == "RL" || d == "TB" || d == "BT" {
+				p.PreferredDirection = d
 			}
 			if *routing != "" {
 				p.DefaultRouting = graph.RoutingStyle(*routing)
@@ -1316,17 +1299,77 @@ func cmdHabits(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 }
 
 func cmdLive(args []string, stdout, stderr io.Writer) int {
-	if len(args) < 1 || args[0] == "status" {
-		jsonOut := hasJSONFlag(args)
-		ep, err := ipc.Discover("")
-		if err != nil {
-			return emitErr(stdout, stderr, jsonOut, "live.status", err, 1)
-		}
-		return emitResult(stdout, jsonOut, "live.status", map[string]any{
+	sub := "status"
+	rest := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub = args[0]
+		rest = args[1:]
+	}
+	fs := flag.NewFlagSet("live", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	nodeID := fs.String("node", "", "target node ID for focus")
+	strategy := fs.String("strategy", "", "layout strategy for live format")
+	dir := fs.String("direction", "", "direction for live format")
+	jsonOut := fs.Bool("json", false, "output JSON")
+	_ = fs.Parse(reorderFlags(rest))
+
+	ep, err := ipc.Discover("")
+	if err != nil {
+		return emitErr(stdout, stderr, *jsonOut, "live."+sub, err, 1)
+	}
+	switch sub {
+	case "status":
+		return emitResult(stdout, *jsonOut, "live.status", map[string]any{
 			"connected": true, "pid": ep.PID, "addr": ep.Addr,
 		}, fmt.Sprintf("Live GUI connected (pid=%d addr=%s)\n", ep.PID, ep.Addr))
+	case "fit", "origin", "focus", "format":
+		res, err := ipc.Control(ep, map[string]any{
+			"action":    sub,
+			"nodeId":    *nodeID,
+			"strategy":  *strategy,
+			"direction": *dir,
+		})
+		if err != nil {
+			return emitErr(stdout, stderr, *jsonOut, "live."+sub, err, 1)
+		}
+		return emitResult(stdout, *jsonOut, "live."+sub, res, fmt.Sprintf("Live action %s applied\n", sub))
+	default:
+		return emitErr(stdout, stderr, *jsonOut, "live", fmt.Errorf("usage: drawgraph live <status|fit|origin|focus|format> [--json]"), 2)
 	}
-	return emitErr(stdout, stderr, hasJSONFlag(args), "live", fmt.Errorf("usage: drawgraph live status [--json]"), 2)
+}
+
+func cmdMCP(args []string, reg *icons.Registry, hb *habits.Store, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "config" {
+		exe, _ := os.Executable()
+		if exe == "" {
+			exe = "drawgraph"
+		}
+		_, _ = io.WriteString(stdout, mcp.ConfigSnippet(exe))
+		return 0
+	}
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	httpAddr := fs.String("http", "", "optional HTTP listen addr (e.g. 127.0.0.1:7332) instead of stdio")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	srv, err := mcp.NewServer(reg, hb)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "drawgraph mcp: %v\n", err)
+		return 1
+	}
+	if *httpAddr != "" {
+		if err := srv.ServeHTTP(context.Background(), *httpAddr); err != nil {
+			_, _ = fmt.Fprintf(stderr, "drawgraph mcp http: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if err := srv.ServeStdio(context.Background(), stdin, stdout); err != nil {
+		_, _ = fmt.Fprintf(stderr, "drawgraph mcp stdio: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func cmdUpdate(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
@@ -1468,93 +1511,19 @@ func cmdUpdate(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 }
 
 func loadAnyDoc(path string) (*graph.Document, error) {
-	ext := strings.ToLower(filepath.Ext(path))
-	if ext == ".drawio" || ext == ".xml" {
-		return drawio.ImportFile(path)
-	}
-	return graph.LoadFile(path)
+	return ops.LoadAnyDoc(path)
 }
 
 func loadOrCreateDoc(path string, hb *habits.Store) (*graph.Document, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		doc := graph.NewDocument(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
-		hb.ApplyToDocument(doc)
-		return doc, nil
-	}
-	return loadAnyDoc(path)
+	return ops.LoadOrCreateDoc(path, hb)
 }
 
 func saveDoc(path string, doc *graph.Document, live bool, reason string) error {
-	ext := strings.ToLower(filepath.Ext(path))
-	var err error
-	if ext == ".drawio" || ext == ".xml" {
-		err = drawio.ExportFile(path, doc)
-	} else {
-		err = graph.SaveAtomic(path, doc)
-	}
-	if err != nil {
-		return err
-	}
-	if live {
-		if ep, derr := ipc.Discover(""); derr == nil {
-			_ = ipc.PushDocument(ep, doc, reason)
-		}
-	}
-	return nil
+	return ops.SaveDoc(path, doc, live, reason)
 }
 
 func selectPage(doc *graph.Document, pageID string) (*graph.Page, error) {
-	if pageID == "" {
-		return doc.ActivePage(), nil
-	}
-	p := doc.PageByID(pageID)
-	if p == nil {
-		return nil, fmt.Errorf("page %q not found", pageID)
-	}
-	return p, nil
-}
-
-func applyArchTemplate(doc *graph.Document, p *graph.Page, hb *habits.Store) error {
-	dsl := `
-container cluster "Cloud Cluster"
-node client "Web / Mobile" kind:rounded icon:builtin/browser
-node gw "API Gateway" kind:rounded icon:builtin/gateway parent:cluster
-node auth "Auth Service" kind:rounded icon:builtin/lock parent:cluster
-node core "Core Service" kind:rounded icon:builtin/service parent:cluster
-node cache "Redis Cache" kind:rounded icon:builtin/cache parent:cluster
-node db "Primary DB" kind:cylinder icon:builtin/database parent:cluster
-client -> gw : "HTTPS"
-gw -> auth : "JWT"
-gw -> core : "gRPC"
-core -> cache : "GET/SET"
-core -> db : "SQL"
-`
-	if _, _, err := ApplyDSL(doc, p, dsl, hb); err != nil {
-		return err
-	}
-	layout.FormatPage(doc, p, layout.OptionsFromHabits(hb.Snapshot(), false))
-	return nil
-}
-
-func applyFlowTemplate(doc *graph.Document, p *graph.Page, hb *habits.Store) error {
-	dsl := `
-node start "Request In" kind:ellipse
-node check "Authorized?" kind:diamond
-node work "Process Task" kind:rounded icon:builtin/bot
-node reject "Return 401" kind:rounded
-node done "Done" kind:ellipse
-start -> check
-check -> work : "Yes"
-check -> reject : "No"
-work -> done
-`
-	if _, _, err := ApplyDSL(doc, p, dsl, hb); err != nil {
-		return err
-	}
-	opts := layout.OptionsFromHabits(hb.Snapshot(), false)
-	opts.Direction = "TB"
-	layout.FormatPage(doc, p, opts)
-	return nil
+	return ops.SelectPage(doc, pageID)
 }
 
 func setOptFloat(s string, dst *float64) {
@@ -1651,7 +1620,9 @@ Diagram Commands:
   page <list|add|switch|remove> <file>      Manage diagram pages
   batch <file> [--ops-file | --stdin]       Apply transactional JSON ops atomically
   dsl <file> [--dsl-file | --stdin]         Draw from concise architecture DSL + auto-layout
-  format <file> [--direction LR|TB]         One-click elegant layout, routing & harmonization
+  format <file> [--strategy layered|tree|grid|radial|swimlane|compact] [--direction LR|RL|TB|BT]
+  align <file> --ids a,b --mode <align>    Align or distribute nodes
+  mermaid <file> [--stdin|--mermaid-file]   Import Mermaid flowchart into formatted diagram
   import <in.drawio> --to <out.drawgraph>   Import draw.io XML
   export <file> --to <out.png|svg|drawio>   Headless export via MyGo GPU renderer / SVG / draw.io
 
@@ -1665,7 +1636,7 @@ Icon Plugin Commands (Git / Local / SVG):
 
 Habit Memory Commands (Persisted Across Projects):
   habits show                               Show persistent cross-project preferences & learned habits
-  habits set [flags]                        Persist default preset, direction, routing, colors, gaps
+  habits set [flags]                        Persist language, preset, strategy, direction, routing, wheel
   habits presets                            List curated style presets
   habits export/import/reset                Manage portable habit profiles
 
@@ -1675,10 +1646,11 @@ Self-Update Commands (Manual & Automatic):
   update apply                               Download, verify & install latest release
   update config [flags]                      Configure auto-check, auto-download, channel
 
-Agent Integration:
+Agent Integration & Native MCP Server:
+  mcp [--http addr | config]                Start MCP JSON-RPC 2.0 server or print client config
   schema                                    Print JSON capability schema for AI agents
   skill [--install <dir>]                   Print or install SKILL.md for AI agents
-  live status                               Check live connection to running DrawGraph GUI
+  live <status|fit|origin|focus|format>     Inspect or control running DrawGraph GUI
 `)
 }
 

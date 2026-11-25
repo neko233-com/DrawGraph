@@ -201,32 +201,162 @@ func AlignNodes(p *Page, ids []string, mode AlignMode) bool {
 			curY += n.H + gap
 		}
 	}
+	if changed {
+		p.MarkDirty()
+	}
+	return changed
+}
+
+// ZOrderMode identifies layer stacking operations.
+type ZOrderMode string
+
+const (
+	ZOrderFront    ZOrderMode = "front"
+	ZOrderBack     ZOrderMode = "back"
+	ZOrderForward  ZOrderMode = "forward"
+	ZOrderBackward ZOrderMode = "backward"
+)
+
+// ReorderNodes adjusts ZIndex of ids on page p and marks the spatial index dirty.
+func ReorderNodes(p *Page, ids []string, mode ZOrderMode) bool {
+	if p == nil || len(ids) == 0 || len(p.Nodes) == 0 {
+		return false
+	}
+	idSet := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idSet[id] = true
+	}
+	minZ, maxZ := p.Nodes[0].ZIndex, p.Nodes[0].ZIndex
+	for _, n := range p.Nodes[1:] {
+		if n.ZIndex < minZ {
+			minZ = n.ZIndex
+		}
+		if n.ZIndex > maxZ {
+			maxZ = n.ZIndex
+		}
+	}
+	changed := false
+	for _, n := range p.Nodes {
+		if !idSet[n.ID] {
+			continue
+		}
+		switch mode {
+		case ZOrderFront:
+			if n.ZIndex <= maxZ {
+				maxZ++
+				n.ZIndex = maxZ
+				changed = true
+			}
+		case ZOrderBack:
+			if n.ZIndex >= minZ {
+				minZ--
+				n.ZIndex = minZ
+				changed = true
+			}
+		case ZOrderForward:
+			n.ZIndex++
+			changed = true
+		case ZOrderBackward:
+			n.ZIndex--
+			changed = true
+		}
+	}
+	if changed {
+		p.MarkDirty()
+	}
+	return changed
+}
+
+// GroupNodes wraps ids into a new KindContainer node sized cleanly around them.
+func GroupNodes(p *Page, ids []string, label string) (*Node, error) {
+	if p == nil || len(ids) == 0 {
+		return nil, nil
+	}
+	var members []*Node
+	for _, id := range ids {
+		if n := p.NodeByID(id); n != nil && n.Kind != KindContainer && n.Kind != KindSwimlane {
+			members = append(members, n)
+		}
+	}
+	if len(members) == 0 {
+		return nil, nil
+	}
+	box := members[0].Box()
+	for _, m := range members[1:] {
+		box = box.Union(m.Box())
+	}
+	if label == "" {
+		label = "Group"
+	}
+	pad := 32.0
+	hdr := 28.0
+	group := &Node{
+		ID:    p.NextNodeID("group"),
+		Kind:  KindContainer,
+		X:     box.X - pad,
+		Y:     box.Y - pad - hdr,
+		W:     box.W + pad*2,
+		H:     box.H + pad*2 + hdr,
+		Label: label,
+		Style: NodeStyle{Radius: 12, StrokeWidth: 1.5, FontSize: 13},
+	}
+	if err := p.AddNode(group); err != nil {
+		return nil, err
+	}
+	for _, m := range members {
+		m.ParentID = group.ID
+	}
+	p.MarkDirty()
+	return group, nil
+}
+
+// UngroupNodes dissolves selected containers (promoting children) or unparents selected child nodes.
+func UngroupNodes(p *Page, ids []string) bool {
+	if p == nil || len(ids) == 0 {
+		return false
+	}
+	changed := false
+	var removeContainers []string
+	for _, id := range ids {
+		n := p.NodeByID(id)
+		if n == nil {
+			continue
+		}
+		if n.Kind == KindContainer || n.Kind == KindSwimlane {
+			for _, ch := range p.Nodes {
+				if ch.ParentID == n.ID {
+					ch.ParentID = n.ParentID
+					changed = true
+				}
+			}
+			removeContainers = append(removeContainers, n.ID)
+			changed = true
+		} else if n.ParentID != "" {
+			n.ParentID = ""
+			changed = true
+		}
+	}
+	for _, cid := range removeContainers {
+		p.RemoveNode(cid)
+	}
+	if changed {
+		p.MarkDirty()
+	}
 	return changed
 }
 
 // HitNode returns the topmost node at world coordinate pt, or nil.
 func (p *Page) HitNode(pt geo.Vec) *Node {
-	sorted := p.SortedNodes()
-	for i := len(sorted) - 1; i >= 0; i-- {
-		n := sorted[i]
-		if n.Box().Contains(pt) {
-			return n
-		}
+	if p == nil {
+		return nil
 	}
-	return nil
+	return p.EnsureIndex().HitPoint(pt)
 }
 
 // HitEdge returns the topmost edge within tolerance pixels of pt, or nil.
 func (p *Page) HitEdge(pt geo.Vec, tolerance float64) *Edge {
-	if tolerance <= 0 {
-		tolerance = 8
+	if p == nil {
+		return nil
 	}
-	for i := len(p.Edges) - 1; i >= 0; i-- {
-		e := p.Edges[i]
-		pts := p.EdgePoints(e)
-		if geo.DistToPolyline(pt, pts) <= tolerance {
-			return e
-		}
-	}
-	return nil
+	return p.EnsureIndex().HitEdgePoint(p, pt, tolerance)
 }

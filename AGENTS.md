@@ -19,7 +19,10 @@ All core subsystems are designed with additive forward-compatible contracts—pr
 
 - **Schema Migrations**: `internal/graph/migrate.go` (`RegisterMigration`, `MigrateUp`). Keep JSON schemas additive and preserve `Meta` maps and unknown `FormatVersion > FormatVersion` files cleanly.
 - **Shape Plugins**: `internal/render/render.go` (`RegisterShape`, `RegisteredShapes`). New diagram node types can plug in GPU painters without modifying core render dispatch.
-- **Layout Strategies**: `internal/layout/layout.go` (`RegisterStrategy`, `RegisteredStrategies`). New auto-layout engines register beside `"layered"`.
+- **Layout Strategies**: `internal/layout/layout.go` (`RegisterStrategy`, `RegisteredStrategies`). Built-in strategies (`"layered"`, `"tree"`, `"grid"`, `"radial"`, `"swimlane"`, `"compact"`) plus custom plugins register cleanly.
+- **Multi-Language i18n**: `internal/i18n/i18n.go` (`RegisterLocale`, `SupportedLocales`). Ships built-in `auto` OS detection, `en`, `zh-CN`, `zh-TW`, `ja`, and `ko` dictionaries persisted via `habits.Profile.Language`.
+- **Spatial Index & Virtual Canvas**: `internal/graph/spatial.go` & `internal/render/render.go` (`SpatialIndex`, `PaintSceneWithStats`, GPU LOD, smart snap guides). Keep `Page.MarkDirty()` updated after bulk geometry mutations.
+- **Native MCP & Agent Ops**: `internal/ops` + `internal/mcp` (`drawgraph mcp` stdio JSON-RPC 2.0 & HTTP) + `internal/mermaid` share one unified execution path with `internal/agentcli`.
 - **Export Drivers**: `internal/export/export.go` (`RegisterDriver`, `SupportedExtensions`). New output formats register cleanly for both CLI and GUI export dialogs.
 - **Git Icon Plugins**: `internal/icons/registry.go` (`PackManifest` with `SchemaVersion` & `MinAppVersion`) supports Git URLs, local directories, and single SVGs.
 - **Self-Update Engine**: `internal/update` supports `stable` & `prerelease` GitHub Release channels, SHA-256 verification, manual CLI (`drawgraph update check|download|apply|config`) and GUI manual/auto updates (Windows MSI + macOS DMG).

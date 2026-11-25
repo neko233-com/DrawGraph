@@ -188,20 +188,20 @@ func (a *App) InstallUpdate() {
 func (a *App) statusUpdateLabel() string {
 	switch a.UpdateState {
 	case updateChecking:
-		return "Checking..."
+		return a.T("update.checking")
 	case updateAvailable:
 		if a.UpdateRelease != nil {
 			return "Update v" + a.UpdateRelease.Version
 		}
-		return "Update Available"
+		return a.T("update.available")
 	case updateDownloading:
 		return fmt.Sprintf("Downloading %.0f%%", a.UpdateProgress)
 	case updateReady:
-		return "Restart to Update"
+		return a.T("update.restart")
 	case updateUptodate:
-		return "Up to Date"
+		return a.T("update.uptodate")
 	case updateError:
-		return "Update Error"
+		return a.T("update.error")
 	default:
 		return version.String()
 	}
@@ -211,7 +211,7 @@ func (a *App) updateDrawer(c *ui.Context, tk *theme.Tokens) {
 	feedback.Drawer(c, &a.UpdateOpen, feedback.DrawerProps{
 		Placement: feedback.Right,
 		Size:      440,
-		Title:     "Software Updates",
+		Title:     a.T("drawer.updatesTitle"),
 	}, func() {
 		prof := a.Habits.Snapshot()
 		ui.Column(c).Gap(14).Children(func() {
@@ -251,14 +251,14 @@ func (a *App) updateDrawer(c *ui.Context, tk *theme.Tokens) {
 					}
 				}
 				ui.Row(c).Gap(8).Children(func() {
-					if iconButton(c, lucide.RefreshCw(), "Check Now", action.ButtonProps{
+					if iconButton(c, lucide.RefreshCw(), a.T("drawer.checkNow"), action.ButtonProps{
 						Variant: action.Default,
 						Size:    theme.Small,
 					}).Disabled(a.UpdateState == updateChecking || a.UpdateState == updateDownloading).Clicked() {
 						a.CheckUpdates(true)
 					}
 					if a.UpdateState == updateAvailable {
-						if action.Button(c, "Download Update", action.ButtonProps{
+						if action.Button(c, a.T("drawer.downloadUpdate"), action.ButtonProps{
 							Variant: action.Primary,
 							Size:    theme.Small,
 						}).Clicked() {
@@ -266,7 +266,7 @@ func (a *App) updateDrawer(c *ui.Context, tk *theme.Tokens) {
 						}
 					}
 					if a.UpdateState == updateReady {
-						if action.Button(c, "Install & Restart", action.ButtonProps{
+						if action.Button(c, a.T("drawer.installRestart"), action.ButtonProps{
 							Variant: action.Primary,
 							Size:    theme.Small,
 						}).Clicked() {
@@ -277,22 +277,22 @@ func (a *App) updateDrawer(c *ui.Context, tk *theme.Tokens) {
 			})
 
 			layout.Block(c, layout.BlockProps{Variant: layout.BlockOutlined}).Padding(14).Gap(10).Children(func() {
-				ui.Text(c, "Automatic & Manual Update Settings").FontSize(13).FontWeight(600).TextColor(tk.Text)
+				ui.Text(c, a.T("drawer.updateSettings")).FontSize(13).FontWeight(600).TextColor(tk.Text)
 				autoChk := prof.AutoCheckUpdates
-				if choice.Checkbox(c, &autoChk, "Automatically check for updates on startup", choice.CheckboxProps{}).Changed() {
+				if choice.Checkbox(c, &autoChk, a.T("drawer.autoCheckUpdates"), choice.CheckboxProps{}).Changed() {
 					_ = a.Habits.Update(func(p *habits.Profile) { p.AutoCheckUpdates = autoChk })
 				}
 				autoDL := prof.AutoDownloadUpdates
-				if choice.Checkbox(c, &autoDL, "Automatically download verified installers in background", choice.CheckboxProps{}).Changed() {
+				if choice.Checkbox(c, &autoDL, a.T("drawer.autoDownload"), choice.CheckboxProps{}).Changed() {
 					_ = a.Habits.Update(func(p *habits.Profile) { p.AutoDownloadUpdates = autoDL })
 				}
 				ch := prof.UpdateChannel
 				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, "Release Channel").FontSize(11).TextColor(tk.TextTertiary)
+					ui.Text(c, a.T("drawer.releaseChannel")).FontSize(11).TextColor(tk.TextTertiary)
 					field.Select(c, &ch, field.SelectProps{
 						Options: []field.SelectOption{
-							{Value: "stable", Label: "Stable Releases"},
-							{Value: "prerelease", Label: "Preview / Prerelease"},
+							{Value: "stable", Label: a.T("drawer.channelStable")},
+							{Value: "prerelease", Label: a.T("drawer.channelPrerelease")},
 						},
 						Size: theme.Middle,
 					})

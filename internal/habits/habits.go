@@ -98,6 +98,40 @@ func BuiltinPresets() []Preset {
 			DarkEdge:    graph.EdgeStyle{Stroke: "#D4D4D8", StrokeWidth: 1.6, FontSize: 12, TextColor: "#F4F4F5", Opacity: 1},
 			AccentStops: []string{"#FAFAFA", "#F4F4F5", "#E4E4E7"},
 		},
+		{
+			ID:          "vibrant-tech",
+			Name:        "Vibrant Tech",
+			Description: "Crisp high-clarity cards with semantic indigo strokes and generous radii.",
+			Routing:     graph.RouteOrthogonal,
+			LightNode: graph.NodeStyle{
+				Fill: "#F8FAFF", Stroke: "#6366F1", StrokeWidth: 1.6, Radius: 12,
+				FontSize: 13, TextColor: "#1E1B4B", Shadow: true, Opacity: 1,
+			},
+			DarkNode: graph.NodeStyle{
+				Fill: "#1E1B4B", Stroke: "#818CF8", StrokeWidth: 1.6, Radius: 12,
+				FontSize: 13, TextColor: "#EEF2FF", Shadow: false, Opacity: 1,
+			},
+			LightEdge:   graph.EdgeStyle{Stroke: "#4F46E5", StrokeWidth: 1.75, FontSize: 12, TextColor: "#312E81", Opacity: 1},
+			DarkEdge:    graph.EdgeStyle{Stroke: "#A5B4FC", StrokeWidth: 1.75, FontSize: 12, TextColor: "#E0E7FF", Opacity: 1},
+			AccentStops: []string{"#EEF2FF", "#ECFEFF", "#ECFDF5", "#FEF3C7", "#FCE7F3"},
+		},
+		{
+			ID:          "warm-paper",
+			Name:        "Warm Editorial",
+			Description: "High-legibility warm paper tones crafted for product specs and design docs.",
+			Routing:     graph.RouteCurved,
+			LightNode: graph.NodeStyle{
+				Fill: "#FFFDF7", Stroke: "#D97706", StrokeWidth: 1.5, Radius: 10,
+				FontSize: 13, TextColor: "#292524", Shadow: true, Opacity: 1,
+			},
+			DarkNode: graph.NodeStyle{
+				Fill: "#292524", Stroke: "#F59E0B", StrokeWidth: 1.5, Radius: 10,
+				FontSize: 13, TextColor: "#FAF7F2", Shadow: false, Opacity: 1,
+			},
+			LightEdge:   graph.EdgeStyle{Stroke: "#78716C", StrokeWidth: 1.75, FontSize: 12, TextColor: "#44403C", Opacity: 1},
+			DarkEdge:    graph.EdgeStyle{Stroke: "#D6D3D1", StrokeWidth: 1.75, FontSize: 12, TextColor: "#F5F5F4", Opacity: 1},
+			AccentStops: []string{"#FEF3C7", "#FFEDD5", "#DCFCE7", "#E0F2FE"},
+		},
 	}
 }
 
@@ -164,6 +198,12 @@ type Profile struct {
 	LastUpdateCheck     int64  `json:"lastUpdateCheck,omitempty"`
 	SkippedVersion      string `json:"skippedVersion,omitempty"`
 
+	// Localization & Interaction Habits
+	Language        string `json:"language"`        // "auto", "en", "zh-CN", "zh-TW", "ja", "ko"
+	DefaultStrategy string `json:"defaultStrategy"` // "layered", "tree", "grid", "radial", "swimlane", "compact"
+	WheelMode       string `json:"wheelMode"`       // "pan" or "zoom"
+	ShowPerfHUD     bool   `json:"showPerfHud"`
+
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
@@ -172,6 +212,7 @@ func DefaultProfile() *Profile {
 	return &Profile{
 		Version:             1,
 		AutoRemember:        true,
+		Language:            "auto",
 		ThemeMode:           "auto",
 		StylePreset:         "lobe-clean",
 		DefaultNodeKind:     graph.KindRounded,
@@ -186,6 +227,9 @@ func DefaultProfile() *Profile {
 		DefaultArrow:        graph.ArrowClassic,
 		DefaultEdgeWidth:    1.75,
 		PreferredDirection:  "LR",
+		DefaultStrategy:     "layered",
+		WheelMode:           "pan",
+		ShowPerfHUD:         true,
 		GapX:                76,
 		GapY:                56,
 		GridSize:            20,
@@ -616,5 +660,14 @@ func mergeMissingDefaults(p *Profile) {
 	}
 	if p.UpdateCheckHours <= 0 {
 		p.UpdateCheckHours = def.UpdateCheckHours
+	}
+	if p.Language == "" {
+		p.Language = def.Language
+	}
+	if p.DefaultStrategy == "" {
+		p.DefaultStrategy = def.DefaultStrategy
+	}
+	if p.WheelMode != "zoom" && p.WheelMode != "pan" {
+		p.WheelMode = def.WheelMode
 	}
 }

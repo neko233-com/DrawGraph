@@ -225,6 +225,9 @@ type Page struct {
 	Nodes      []*Node           `json:"nodes"`
 	Edges      []*Edge           `json:"edges"`
 	Meta       map[string]string `json:"meta,omitempty"`
+
+	rev uint64
+	idx *SpatialIndex
 }
 
 // Document is the root persisted diagram file (.drawgraph / .drawgraph.json).
@@ -325,6 +328,7 @@ func (d *Document) Normalize() {
 		if p.ID == d.ActivePageID {
 			hasActive = true
 		}
+		p.MarkDirty()
 	}
 	if !hasActive {
 		d.ActivePageID = d.Pages[0].ID
@@ -552,6 +556,7 @@ func (p *Page) AddNode(n *Node) error {
 	}
 	NormalizeNode(n)
 	p.Nodes = append(p.Nodes, n)
+	p.MarkDirty()
 	return nil
 }
 
@@ -580,6 +585,7 @@ func (p *Page) RemoveNode(id string) bool {
 		}
 	}
 	p.Edges = kept
+	p.MarkDirty()
 	return true
 }
 
@@ -602,6 +608,7 @@ func (p *Page) AddEdge(e *Edge) error {
 	}
 	NormalizeEdge(e, RouteOrthogonal)
 	p.Edges = append(p.Edges, e)
+	p.MarkDirty()
 	return nil
 }
 
@@ -610,6 +617,7 @@ func (p *Page) RemoveEdge(id string) bool {
 	for i, e := range p.Edges {
 		if e.ID == id {
 			p.Edges = append(p.Edges[:i], p.Edges[i+1:]...)
+			p.MarkDirty()
 			return true
 		}
 	}
@@ -618,6 +626,9 @@ func (p *Page) RemoveEdge(id string) bool {
 
 // SortedNodes returns a slice of nodes ordered stably by ZIndex (containers first).
 func (p *Page) SortedNodes() []*Node {
+	if p != nil && p.idx != nil && p.idx.rev == p.rev && p.idx.nodeLen == len(p.Nodes) {
+		return p.idx.sortedNodes
+	}
 	out := slices.Clone(p.Nodes)
 	sort.SliceStable(out, func(i, j int) bool {
 		ci := out[i].Kind == KindContainer || out[i].Kind == KindSwimlane
@@ -661,6 +672,10 @@ func (p *Page) EdgePoints(e *Edge) []geo.Vec {
 func (p *Page) Bounds() (geo.Box, bool) {
 	if len(p.Nodes) == 0 {
 		return geo.Box{}, false
+	}
+	if len(p.Nodes) > 256 {
+		idx := p.EnsureIndex()
+		return idx.bounds, idx.hasBounds
 	}
 	b := p.Nodes[0].Box()
 	for _, n := range p.Nodes[1:] {

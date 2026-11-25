@@ -136,4 +136,27 @@ func TestTiledInfiniteCanvasExportAndEmbeddedHDMedia(t *testing.T) {
 	if !strings.Contains(s, "<image href=\"data:image/png;base64,") || !strings.Contains(s, "Demo Clip") {
 		t.Fatalf("SVG missing embedded HD image or video node:\n%s", s)
 	}
+
+	// Verify CJK text, bidirectional StartArrow, and dotted lines export cleanly.
+	docCJK := graph.NewDocument("中文导出测试")
+	pc := docCJK.ActivePage()
+	_ = pc.AddNode(&graph.Node{ID: "a", Label: "客户端", X: 40, Y: 40, W: 140, H: 60})
+	_ = pc.AddNode(&graph.Node{ID: "b", Label: "服务端", X: 300, Y: 40, W: 140, H: 60})
+	_ = pc.AddEdge(&graph.Edge{
+		ID: "bi", SourceID: "a", TargetID: "b", Label: "双向同步",
+		StartArrow: graph.ArrowClassic, EndArrow: graph.ArrowClassic,
+		Style: graph.EdgeStyle{Dash: graph.DashDotted},
+	})
+	svgCJK, err := export.RenderSVG(docCJK, "", reg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := string(svgCJK)
+	if !strings.Contains(sc, "marker-start") || !strings.Contains(sc, `stroke-dasharray="2,4"`) || !strings.Contains(sc, "客户端") {
+		t.Fatalf("CJK/bidirectional SVG mismatch:\n%s", sc)
+	}
+	pngCJK, err := export.RenderPNG(docCJK, "", reg, false, 1)
+	if err != nil || len(pngCJK) < 200 {
+		t.Fatalf("CJK RenderPNG failed: %v", err)
+	}
 }

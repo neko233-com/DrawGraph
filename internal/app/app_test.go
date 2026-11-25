@@ -42,6 +42,7 @@ func (h *testHost) Update(fn func()) {
 
 func newTestWorkbench(t *testing.T) (*app.App, *ui.Tester, *testHost) {
 	t.Helper()
+	t.Setenv("DRAWGRAPH_LANG", "en")
 	tmp := t.TempDir()
 	hb, err := habits.OpenStore(filepath.Join(tmp, "habits.json"))
 	if err != nil {
@@ -335,5 +336,69 @@ func TestUpdateDrawerCheckAndSettingsPersistence(t *testing.T) {
 	tt.Frame()
 	if !a.Habits.Snapshot().AutoDownloadUpdates {
 		t.Fatalf("expected AutoDownloadUpdates persisted in habits")
+	}
+}
+
+func TestWorkbenchMultiLanguageCommandPaletteMermaidAndPowerFeatures(t *testing.T) {
+	a, tt, _ := newTestWorkbench(t)
+
+	// 1. Open Mermaid Modal and import a flowchart cleanly
+	if err := tt.Click("Mermaid"); err != nil {
+		t.Fatalf("click Mermaid toolbar button: %v", err)
+	}
+	tt.Advance(200 * time.Millisecond)
+	a.MermaidText = "flowchart LR\n  gw([Gateway]) --> api[Core API]\n  api --> db[(Orders DB)]\n"
+	if err := tt.Click("Import & Format"); err != nil {
+		t.Fatalf("click Import & Format in Mermaid modal: %v", err)
+	}
+	tt.Frame()
+	if len(a.Page().Nodes) != 3 || len(a.Page().Edges) != 2 {
+		t.Fatalf("expected 3 nodes & 2 edges from Mermaid import, got %d & %d", len(a.Page().Nodes), len(a.Page().Edges))
+	}
+
+	// 2. Test Cmd+C / Cmd+V structured copy-paste preserves nodes & internal connectors!
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Frame()
+	tt.Key(ui.Cmd, ui.KeyC)
+	tt.Frame()
+	tt.Key(ui.Cmd, ui.KeyV)
+	tt.Frame()
+	if len(a.Page().Nodes) != 6 || len(a.Page().Edges) != 4 {
+		t.Fatalf("expected structured copy-paste to duplicate 3 nodes + 2 edges, got %d nodes %d edges", len(a.Page().Nodes), len(a.Page().Edges))
+	}
+
+	// 3. Test Grouping + Z-order + Multi-strategy layout (grid / radial / tree)
+	a.GroupSelection()
+	tt.Frame()
+	a.FormatWithStrategy("tree", "TB")
+	tt.Frame()
+	if a.LayoutStrategy != "tree" {
+		t.Fatalf("expected tree strategy active, got %s", a.LayoutStrategy)
+	}
+
+	// 4. Open Command Palette via Cmd+K, filter for "Orders DB", jump to it
+	tt.Key(ui.Cmd, ui.KeyK)
+	tt.Advance(200 * time.Millisecond)
+	a.PaletteQuery = "Orders DB"
+	tt.Frame()
+	if !a.PaletteOpen || !tt.HasText("Orders DB") {
+		t.Fatalf("expected Command Palette open with Orders DB")
+	}
+	if err := tt.Click("Jump db"); err != nil {
+		t.Fatalf("jump via command palette: %v", err)
+	}
+	tt.Frame()
+	if !a.SelectedNodes["db"] {
+		t.Fatalf("expected Jump db to select node 'db'")
+	}
+
+	// 5. Switch language live to zh-CN and verify localized UI labels render!
+	a.SetLanguage("zh-CN")
+	tt.Frame()
+	if !tt.HasText("一键排版") || !tt.HasText("图标插件") || !tt.HasText("用户习惯") {
+		t.Fatalf("expected toolbar to translate immediately to zh-CN")
+	}
+	if img := tt.Image(); img == nil || img.Bounds().Dx() < 800 {
+		t.Fatalf("unexpected rendered zh-CN UI image: %v", img)
 	}
 }

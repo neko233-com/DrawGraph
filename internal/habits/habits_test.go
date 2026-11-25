@@ -63,4 +63,21 @@ func TestPersistentCrossProjectHabitsAndLearning(t *testing.T) {
 	if s2.Snapshot().PreferredDirection != "LR" {
 		t.Fatal("Reset did not restore default LR")
 	}
+
+	// Verify language, layout strategy, and wheel mode persist cleanly across instances.
+	if err := s2.Update(func(pr *habits.Profile) {
+		pr.Language = "zh-CN"
+		pr.DefaultStrategy = "tree"
+		pr.WheelMode = "zoom"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s3, err := habits.OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p3 := s3.Snapshot()
+	if p3.Language != "zh-CN" || p3.DefaultStrategy != "tree" || p3.WheelMode != "zoom" {
+		t.Fatalf("expected persisted language/strategy/wheel, got %+v", p3)
+	}
 }

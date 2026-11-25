@@ -313,3 +313,43 @@ func TestCLIUpdateAndExtensionRegistries(t *testing.T) {
 		t.Fatalf("update download failed (%d): %s %s", code, out, errStr)
 	}
 }
+
+func TestCLIMermaidAlignMultiStrategyHabitsAndMCPConfig(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	diag := filepath.Join(tmp, "mmd.drawgraph")
+
+	code, out, errStr := runCLI(t, home, "", "mcp", "config")
+	if code != 0 || !strings.Contains(out, `"mcpServers"`) || !strings.Contains(out, `"drawgraph"`) {
+		t.Fatalf("mcp config failed (%d): %s %s", code, out, errStr)
+	}
+
+	code, out, errStr = runCLI(t, home, "", "habits", "set", "--language", "zh-CN", "--strategy", "tree", "--wheel-mode", "zoom", "--json")
+	if code != 0 || !strings.Contains(out, `"language": "zh-CN"`) || !strings.Contains(out, `"wheelMode": "zoom"`) {
+		t.Fatalf("habits set extended flags failed (%d): %s %s", code, out, errStr)
+	}
+
+	mmd := "flowchart LR\n  A[Client] --> B{Router} --> C[(DB)]\n"
+	code, out, errStr = runCLI(t, home, mmd, "mermaid", diag, "--stdin", "--strategy", "radial", "--json")
+	if code != 0 || !strings.Contains(out, `"nodes": 3`) {
+		t.Fatalf("cli mermaid failed (%d): %s %s", code, out, errStr)
+	}
+
+	code, out, errStr = runCLI(t, home, "", "format", diag, "--strategy", "grid", "--direction", "TB", "--json")
+	if code != 0 || !strings.Contains(out, `"strategy": "grid"`) {
+		t.Fatalf("cli format --strategy grid failed (%d): %s %s", code, out, errStr)
+	}
+
+	code, out, errStr = runCLI(t, home, "", "align", diag, "--ids", "A,B,C", "--mode", "top", "--json")
+	if code != 0 {
+		t.Fatalf("cli align failed (%d): %s %s", code, out, errStr)
+	}
+	doc, err := graph.LoadFile(diag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := doc.ActivePage()
+	if p.NodeByID("A").Y != p.NodeByID("B").Y || p.NodeByID("B").Y != p.NodeByID("C").Y {
+		t.Fatalf("expected top alignment across A,B,C, got %v %v %v", p.NodeByID("A").Y, p.NodeByID("B").Y, p.NodeByID("C").Y)
+	}
+}

@@ -53,3 +53,35 @@ func TestOneClickFormatArrangesDAGAndContainersCleanly(t *testing.T) {
 		}
 	}
 }
+
+func TestAllRegisteredLayoutStrategiesWithoutOverlaps(t *testing.T) {
+	strategies := layout.RegisteredStrategies()
+	if len(strategies) < 6 {
+		t.Fatalf("expected >=6 registered strategies, got %v", strategies)
+	}
+	for _, strat := range []string{"layered", "tree", "grid", "radial", "swimlane", "compact"} {
+		doc := graph.NewDocument("Strategy " + strat)
+		p := doc.ActivePage()
+		_ = p.AddNode(&graph.Node{ID: "lane1", Kind: graph.KindSwimlane, Label: "Frontend"})
+		_ = p.AddNode(&graph.Node{ID: "lane2", Kind: graph.KindSwimlane, Label: "Backend"})
+		_ = p.AddNode(&graph.Node{ID: "a", Kind: graph.KindRounded, ParentID: "lane1", X: 100, Y: 100, Label: "UI"})
+		_ = p.AddNode(&graph.Node{ID: "b", Kind: graph.KindRounded, ParentID: "lane2", X: 110, Y: 105, Label: "Gateway"})
+		_ = p.AddNode(&graph.Node{ID: "c", Kind: graph.KindCylinder, ParentID: "lane2", X: 120, Y: 110, Label: "Database"})
+		_ = p.AddNode(&graph.Node{ID: "d", Kind: graph.KindRounded, ParentID: "lane2", X: 125, Y: 115, Label: "Cache"})
+		_ = p.AddEdge(&graph.Edge{ID: "e1", SourceID: "a", TargetID: "b"})
+		_ = p.AddEdge(&graph.Edge{ID: "e2", SourceID: "b", TargetID: "c"})
+		_ = p.AddEdge(&graph.Edge{ID: "e3", SourceID: "b", TargetID: "d"})
+
+		opts := layout.OptionsFromHabits(habits.DefaultProfile(), false)
+		opts.Strategy = strat
+		rep := layout.FormatPage(doc, p, opts)
+		if rep.Strategy != strat {
+			t.Fatalf("strategy %s report mismatch: %+v", strat, rep)
+		}
+		for _, is := range doc.Validate() {
+			if is.Code == "overlapping_nodes" {
+				t.Fatalf("strategy %s still left overlapping siblings: %+v", strat, is)
+			}
+		}
+	}
+}

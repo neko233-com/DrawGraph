@@ -48,6 +48,11 @@ type Handler interface {
 	ReloadIcons() error
 }
 
+// ControlHandler is an optional extension implemented by GUIs supporting remote viewport & layout driving.
+type ControlHandler interface {
+	HandleControl(action string, params map[string]any) (map[string]any, error)
+}
+
 // Server exposes authenticated local HTTP JSON endpoints for live agent driving.
 type Server struct {
 	ln       net.Listener
@@ -123,6 +128,35 @@ func Start(infoPath string, h Handler) (*Server, error) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+	mux.HandleFunc("/v1/control", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ch, ok := h.(ControlHandler)
+		if !ok {
+			http.Error(w, "live GUI does not implement viewport control", http.StatusNotImplemented)
+			return
+		}
+		action, _ := payload["action"].(string)
+		res, err := ch.HandleControl(action, payload)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if res == nil {
+			res = map[string]any{"ok": true}
+		}
+		_ = json.NewEncoder(w).Encode(res)
 	})
 
 	s := &Server{
@@ -258,4 +292,29 @@ func ReloadIcons(ep *EndpointFile) error {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 	return nil
+}
+
+// Control invokes a live GUI camera/layout action ("fit", "origin", "focus", "format", "zoom").
+func Control(ep *EndpointFile, payload map[string]any) (map[string]any, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequest(http.MethodPost, "http://"+ep.Addr+"/v1/control", bytes.NewReader(body))
+	req.Close = true
+	req.Header.Set("Authorization", "Bearer "+ep.Token)
+	req.Header.Set("Content-Type", "application/json")
+	cl := &http.Client{Timeout: 5 * time.Second}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("live control failed (%s): %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out, nil
 }
