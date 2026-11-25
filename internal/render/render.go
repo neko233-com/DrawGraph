@@ -47,6 +47,8 @@ type SceneState struct {
 	Doc            *graph.Document
 	Page           *graph.Page
 	Icons          *icons.Registry
+	ResolveMedia   func(assetID string) ui.ImageSource
+	ActiveVideos   map[string]bool // video node IDs currently rendered by a live ui.Video widget
 	Cam            Camera
 	Dark           bool
 	ShowGrid       bool
@@ -158,6 +160,9 @@ func paintGrid(p *ui.Painter, r ui.Rect, st SceneState, pal Palette) {
 	for step*st.Cam.Zoom < 14 {
 		step *= 5
 	}
+	for step*st.Cam.Zoom > 90 && step >= 4 {
+		step /= 2
+	}
 	major := step * 5
 	view := geo.Box{
 		X: -st.Cam.X,
@@ -181,6 +186,13 @@ func paintGrid(p *ui.Painter, r ui.Rect, st SceneState, pal Palette) {
 			}
 			p.Fill(ui.Rect{X: sx - sz/2, Y: sy - sz/2, W: sz, H: sz}, col, sz/2)
 		}
+	}
+	// Draw subtle world origin (0,0) crosshair when visible inside viewport.
+	ox, oy := st.Cam.WorldToScreen(r, geo.V(0, 0))
+	if ox >= r.X-20 && ox <= r.X+r.W+20 && oy >= r.Y-20 && oy <= r.Y+r.H+20 {
+		axisCol := pal.Accent.Alpha(0.28)
+		p.Line(ox-12, oy, ox+12, oy, 1.2, axisCol)
+		p.Line(ox, oy-12, ox, oy+12, 1.2, axisCol)
 	}
 }
 
@@ -302,6 +314,12 @@ func paintNode(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, n *graph.No
 		paintNote(p, box, fill, stroke, swpx, z)
 	case graph.KindActor:
 		paintActor(p, box, stroke, swpx, z)
+	case graph.KindImage:
+		paintImageNode(p, box, st, pal, n, fill, stroke, rad, swpx, z)
+		return
+	case graph.KindVideo:
+		paintVideoCard(p, box, st, pal, n, stroke, rad, swpx, z)
+		return
 	default:
 		p.Fill(box, fill, rad)
 		strokeRect(p, box, stroke, rad, swpx, n.Style.Dash)
@@ -726,6 +744,113 @@ func adjustTextForDark(c ui.Color, raw string, dark bool) ui.Color {
 // Expand returns a rect grown by pad on all sides (helper used locally on ui.Rect).
 func ExpandRect(r ui.Rect, pad float32) ui.Rect {
 	return ui.Rect{X: r.X - pad, Y: r.Y - pad, W: r.W + pad*2, H: r.H + pad*2}
+}
+
+func paintImageNode(p *ui.Painter, box ui.Rect, st SceneState, pal Palette, n *graph.Node, fill, stroke ui.Color, rad, swpx, z float32) {
+	if rad == 0 {
+		rad = 8 * z
+	}
+	p.Fill(box, fill, rad)
+	var src ui.ImageSource
+	var asset *graph.MediaAsset
+	if n.Media != nil && n.Media.AssetID != "" {
+		if st.Doc != nil {
+			asset = st.Doc.Assets[n.Media.AssetID]
+		}
+		if st.ResolveMedia != nil {
+			src = st.ResolveMedia(n.Media.AssetID)
+		}
+	}
+	mediaBox := box
+	footerH := float32(0)
+	if n.Media != nil && n.Media.ShowBar && strings.TrimSpace(n.Label) != "" {
+		footerH = min(26*z, box.H*0.25)
+		mediaBox = ui.Rect{X: box.X, Y: box.Y, W: box.W, H: box.H - footerH}
+	}
+	if src != nil {
+		fit := ui.Contain
+		if n.Media != nil {
+			switch n.Media.Fit {
+			case "cover":
+				fit = ui.Cover
+			case "fill":
+				fit = ui.FillBox
+			}
+		}
+		p.Clip(mediaBox, rad, func() {
+			p.Image(src, mediaBox, fit)
+		})
+	} else {
+		// Clean placeholder when image hasn't decoded or path is missing.
+		p.Fill(mediaBox, pal.ContainerFill, rad)
+		fs := max(float32(9), 12*z)
+		msg := "Image Node"
+		if asset != nil && asset.Name != "" {
+			msg = asset.Name
+		}
+		tw, _ := p.MeasureText(box.W-12*z, ui.Span{Text: msg, Size: fs})
+		p.Text(box.X+(box.W-tw)/2, box.Y+(mediaBox.H-fs)/2, msg, fs, pal.NodeText.Alpha(0.65))
+	}
+	if footerH > 0 {
+		bar := ui.Rect{X: box.X, Y: box.Y + box.H - footerH, W: box.W, H: footerH}
+		p.Fill(bar, pal.EdgeLabelBG.Alpha(0.92), 0)
+		p.Line(bar.X, bar.Y, bar.X+bar.W, bar.Y, 1, stroke.Alpha(0.5))
+		fs := max(float32(8), 11*z)
+		lbl := strings.TrimSpace(n.Label)
+		if asset != nil && asset.NaturalW > 0 {
+			lbl = fmt.Sprintf("%s (%dx%d)", lbl, asset.NaturalW, asset.NaturalH)
+		}
+		p.Text(bar.X+8*z, bar.Y+(footerH-fs)/2, lbl, fs, pal.NodeText)
+	}
+	strokeRect(p, box, stroke, rad, swpx, n.Style.Dash)
+}
+
+func paintVideoCard(p *ui.Painter, box ui.Rect, st SceneState, pal Palette, n *graph.Node, stroke ui.Color, rad, swpx, z float32) {
+	if rad == 0 {
+		rad = 10 * z
+	}
+	var asset *graph.MediaAsset
+	if n.Media != nil && n.Media.AssetID != "" && st.Doc != nil {
+		asset = st.Doc.Assets[n.Media.AssetID]
+	}
+	live := st.ActiveVideos != nil && st.ActiveVideos[n.ID] && !st.Export
+	if !live {
+		p.Fill(box, ui.Hex("#0F172A"), rad)
+		// Subtle cinema top/bottom letterbox framing & play emblem.
+		cx, cy := box.X+box.W/2, box.Y+box.H/2
+		pr := min(min(box.W, box.H)*0.18, 24*z)
+		if pr >= 8 {
+			circle := &ui.Path{}
+			circle.Circle(cx, cy, pr)
+			p.FillPath(circle, ui.RGBA(37, 99, 235, 0.90))
+			tri := &ui.Path{}
+			tri.MoveTo(cx-pr*0.30, cy-pr*0.42).
+				LineTo(cx+pr*0.48, cy).
+				LineTo(cx-pr*0.30, cy+pr*0.42).Close()
+			p.FillPath(tri, ui.Hex("#FFFFFF"))
+		}
+		// Title & resolution pill
+		lbl := strings.TrimSpace(n.Label)
+		if lbl == "" && asset != nil {
+			lbl = asset.Name
+		}
+		if lbl != "" {
+			fs := max(float32(8), 11*z)
+			p.Text(box.X+10*z, box.Y+box.H-fs-8*z, lbl, fs, ui.Hex("#F8FAFC"))
+		}
+		if asset != nil && asset.NaturalW > 0 {
+			badge := fmt.Sprintf("VIDEO %dx%d", asset.NaturalW, asset.NaturalH)
+			if asset.DurationSec > 0 {
+				badge += fmt.Sprintf(" · %.0fs", asset.DurationSec)
+			}
+			bfs := max(float32(7), 9.5*z)
+			bw, bh := p.MeasureText(box.W-16*z, ui.Span{Text: badge, Size: bfs})
+			pill := ui.Rect{X: box.X + 8*z, Y: box.Y + 8*z, W: bw + 10*z, H: bh + 4*z}
+			p.Fill(pill, ui.RGBA(15, 23, 42, 0.78), 4*z)
+			p.Text(pill.X+5*z, pill.Y+2*z, badge, bfs, ui.Hex("#93C5FD"))
+		}
+	}
+	strokeRect(p, box, stroke, rad, swpx, n.Style.Dash)
 }
 
 func init() {

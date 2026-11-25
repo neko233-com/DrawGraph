@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/video"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/neko233-com/DrawGraph/internal/habits"
 	"github.com/neko233-com/DrawGraph/internal/icons"
 	"github.com/neko233-com/DrawGraph/internal/layout"
+	"github.com/neko233-com/DrawGraph/internal/media"
 	"github.com/neko233-com/DrawGraph/internal/render"
 )
 
@@ -102,16 +105,24 @@ type App struct {
 	PluginStatus string
 
 	// Pointer drag tracking
-	drag           dragMode
-	dragStartWorld geo.Vec
-	dragStartDip   [2]float32
-	dragStartCam   render.Camera
-	dragNodeOrig   map[string]geo.Box
-	dragCorner     int
-	connectSrcID   string
-	connectEndPt   geo.Vec
-	marqueeBox     *geo.Box
-	spaceHeld      bool
+	drag             dragMode
+	dragStartWorld   geo.Vec
+	dragStartDip     [2]float32
+	dragStartCam     render.Camera
+	dragNodeOrig     map[string]geo.Box
+	dragCorner       int
+	connectSrcID     string
+	connectEndPt     geo.Vec
+	marqueeBox       *geo.Box
+	spaceHeld        bool
+	lastPointerLocal [2]float32
+	minimapDrag      bool
+
+	// HD Image & Live Video caches
+	services     ui.Services
+	hasSvc       bool
+	mediaCache   map[string]ui.ImageSource
+	videoPlayers map[string]*videoPlayerEntry
 
 	// Toast bridge
 	toastSeq   int
@@ -154,7 +165,17 @@ func New(doc *graph.Document, reg *icons.Registry, hb *habits.Store, host Host) 
 		SidebarOpen:   p.SidebarOpen,
 		InspectorOpen: p.InspectorOpen,
 		MinimapOpen:   p.MinimapOpen,
+		mediaCache:    map[string]ui.ImageSource{},
+		videoPlayers:  map[string]*videoPlayerEntry{},
 	}
+}
+
+type videoPlayerEntry struct {
+	assetID   string
+	path      string
+	player    *ui.VideoPlayer
+	sizedOnce bool
+	err       error
 }
 
 // Doc returns the current mutable document snapshot.
@@ -167,6 +188,8 @@ func (a *App) Page() *graph.Page { return a.Hist.Doc.ActivePage() }
 func (a *App) View(c *ui.Context) {
 	theme.Apply(c)
 	tk := theme.TokensOf(c)
+	a.services = c.Services()
+	a.hasSvc = true
 	a.applyTheme(c)
 
 	if b := a.CanvasHandle.Bounds(c); b.W > 0 {
@@ -489,7 +512,281 @@ func (a *App) zoomAt(localX, localY, factor float64) {
 }
 
 func clampZoom(z float64) float64 {
-	return math.Max(0.2, math.Min(4.0, z))
+	return math.Max(0.05, math.Min(8.0, z))
+}
+
+// ResetOrigin centers the infinite canvas camera near world (0,0) at 100% zoom.
+func (a *App) ResetOrigin() {
+	a.Cam = render.Camera{X: 24, Y: 24, Zoom: 1}
+}
+
+// resolveMedia returns a cached GPU ImageSource (full native HD/4K bitmap or SVG) for assetID.
+func (a *App) resolveMedia(assetID string) ui.ImageSource {
+	if assetID == "" {
+		return nil
+	}
+	if a.mediaCache == nil {
+		a.mediaCache = map[string]ui.ImageSource{}
+	}
+	if src, ok := a.mediaCache[assetID]; ok {
+		return src
+	}
+	asset := a.Doc().Assets[assetID]
+	if asset == nil || asset.Kind != media.KindImage {
+		return nil
+	}
+	src, err := media.DecodeAssetImage(asset)
+	if err != nil {
+		a.mediaCache[assetID] = nil
+		return nil
+	}
+	a.mediaCache[assetID] = src
+	return src
+}
+
+func (a *App) activeVideoMap() map[string]bool {
+	if a.Host == nil || a.Host.Window() == nil {
+		return nil
+	}
+	m := map[string]bool{}
+	for _, n := range a.Page().Nodes {
+		if n.Kind == graph.KindVideo && n.Media != nil {
+			if vp := a.ensureVideoPlayer(n); vp != nil && vp.player != nil && vp.player.Ready() {
+				m[n.ID] = true
+			}
+		}
+	}
+	return m
+}
+
+func (a *App) ensureVideoPlayer(n *graph.Node) *videoPlayerEntry {
+	if n == nil || n.Media == nil || n.Media.AssetID == "" {
+		return nil
+	}
+	if a.Host == nil || a.Host.Window() == nil {
+		return nil
+	}
+	asset := a.Doc().Assets[n.Media.AssetID]
+	if asset == nil || asset.FilePath == "" {
+		return nil
+	}
+	if a.videoPlayers == nil {
+		a.videoPlayers = map[string]*videoPlayerEntry{}
+	}
+	if cur, ok := a.videoPlayers[n.ID]; ok && cur.assetID == asset.ID && cur.path == asset.FilePath {
+		if cur.player != nil && !cur.sizedOnce && cur.player.Ready() {
+			if vw, vh := cur.player.Size(); vw > 0 && vh > 0 {
+				cur.sizedOnce = true
+				asset.NaturalW = vw
+				asset.NaturalH = vh
+				if d := cur.player.Duration(); d > 0 {
+					asset.DurationSec = d.Seconds()
+				}
+				dw, dh := media.FitDisplaySize(vw, vh, a.Habits.Snapshot().DefaultMediaMax, media.DefaultMinDisplaySide)
+				n.W = dw
+				n.H = dh
+			}
+		}
+		return cur
+	}
+	if prev, ok := a.videoPlayers[n.ID]; ok && prev.player != nil {
+		prev.player.Close()
+	}
+	pl, err := video.Open(asset.FilePath)
+	entry := &videoPlayerEntry{assetID: asset.ID, path: asset.FilePath, player: pl, err: err}
+	if err == nil && pl != nil {
+		pl.SetLoop(n.Media.Loop)
+		pl.SetMuted(n.Media.Muted)
+		if !n.Media.Autoplay {
+			pl.Pause()
+		}
+	}
+	a.videoPlayers[n.ID] = entry
+	return entry
+}
+
+// DropMediaFiles imports one or more image or video files at worldPt (or viewport center if nil),
+// automatically sizing each node to preserve aspect ratio at a reasonable HD canvas footprint.
+func (a *App) DropMediaFiles(paths []string, worldPt *geo.Vec) int {
+	if len(paths) == 0 {
+		return 0
+	}
+	maxSide := a.Habits.Snapshot().DefaultMediaMax
+	baseX, baseY := 100.0, 100.0
+	if worldPt != nil {
+		baseX, baseY = worldPt.X, worldPt.Y
+	} else if a.CanvasRect.W > 0 {
+		cPt := a.Cam.ScreenToWorld(a.CanvasRect, a.CanvasRect.X+a.CanvasRect.W/2, a.CanvasRect.Y+a.CanvasRect.H/2)
+		baseX, baseY = cPt.X-180, cPt.Y-120
+	}
+
+	var created []*graph.Node
+	curX, curY := baseX, baseY
+	rowMaxH := 0.0
+	var errs []string
+
+	a.Hist.Snapshot()
+	for _, p := range paths {
+		kind := media.ClassifyPath(p)
+		if kind == "" {
+			continue
+		}
+		var asset *graph.MediaAsset
+		var dw, dh float64
+		var err error
+		if kind == media.KindImage {
+			asset, dw, dh, err = media.ImportImageFile(a.Doc(), p, maxSide)
+		} else {
+			asset, dw, dh, err = media.ImportVideoFile(a.Doc(), p, maxSide)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", filepath.Base(p), err))
+			continue
+		}
+		nx, ny := curX, curY
+		if len(paths) == 1 && worldPt != nil {
+			nx = worldPt.X - dw/2
+			ny = worldPt.Y - dh/2
+		}
+		if a.Doc().SnapToGrid {
+			nx = geo.Snap(nx, a.Doc().GridSize)
+			ny = geo.Snap(ny, a.Doc().GridSize)
+		}
+		nodeKind := graph.KindImage
+		if kind == media.KindVideo {
+			nodeKind = graph.KindVideo
+		}
+		n := &graph.Node{
+			Kind:  nodeKind,
+			X:     nx,
+			Y:     ny,
+			W:     dw,
+			H:     dh,
+			Label: asset.Name,
+			Media: &graph.NodeMedia{
+				AssetID:  asset.ID,
+				Fit:      "contain",
+				Autoplay: kind == media.KindVideo,
+				Loop:     true,
+				Muted:    true,
+			},
+			Style: graph.NodeStyle{
+				Radius: 10,
+				Shadow: kind == media.KindImage,
+			},
+		}
+		if err := a.Page().AddNode(n); err == nil {
+			created = append(created, n)
+			curX += dw + 28
+			if dh > rowMaxH {
+				rowMaxH = dh
+			}
+			if curX-baseX > 1400 {
+				curX = baseX
+				curY += rowMaxH + 28
+				rowMaxH = 0
+			}
+		}
+	}
+
+	if len(created) == 0 {
+		a.Hist.Undo()
+		if len(errs) > 0 {
+			a.notifyToast(feedback.ToastError, "Import Media Failed", strings.Join(errs, "; "))
+		}
+		return 0
+	}
+
+	a.SelectedNodes = map[string]bool{}
+	a.SelectedEdges = map[string]bool{}
+	for _, n := range created {
+		a.SelectedNodes[n.ID] = true
+	}
+	a.notifyChanged()
+	a.notifyToast(feedback.ToastSuccess, "Media Added", fmt.Sprintf("Imported %d high-res node(s)", len(created)))
+	return len(created)
+}
+
+// ImportMediaFromDialog opens a native picker to import HD images or videos as canvas nodes.
+func (a *App) ImportMediaFromDialog() {
+	win := a.Host.Window()
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:   win,
+			Title:    "Import Images or Videos",
+			Multiple: true,
+			Filters: []mygo.FileFilter{
+				{Name: "Images & Videos", Extensions: []string{"png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "mp4", "mov", "webm", "mkv", "avi", "m4v"}},
+				{Name: "Images", Extensions: []string{"png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"}},
+				{Name: "Videos", Extensions: []string{"mp4", "mov", "webm", "mkv", "avi", "m4v"}},
+			},
+		})
+		if err != nil || len(paths) == 0 {
+			return
+		}
+		a.Host.Update(func() {
+			a.DropMediaFiles(paths, nil)
+		})
+	}()
+}
+
+// PasteClipboardMedia imports copied image files or clipboard PNG screenshots directly onto the canvas.
+func (a *App) PasteClipboardMedia() bool {
+	if !a.hasSvc {
+		return false
+	}
+	data := a.services.ReadClipboardData(transfer.FileList, transfer.PNG)
+	if files, err := data.Files(); err == nil && len(files) > 0 {
+		if a.DropMediaFiles(files, nil) > 0 {
+			return true
+		}
+	}
+	if pngBytes, err := data.Read(transfer.PNG); err == nil && len(pngBytes) > 0 {
+		maxSide := a.Habits.Snapshot().DefaultMediaMax
+		asset, dw, dh, err := media.ImportImageBytes(a.Doc(), "clipboard.png", "image/png", pngBytes, maxSide)
+		if err == nil {
+			a.Hist.Snapshot()
+			cx, cy := 120.0, 120.0
+			if a.CanvasRect.W > 0 {
+				pt := a.Cam.ScreenToWorld(a.CanvasRect, a.CanvasRect.X+a.CanvasRect.W/2, a.CanvasRect.Y+a.CanvasRect.H/2)
+				cx, cy = pt.X-dw/2, pt.Y-dh/2
+			}
+			n := &graph.Node{
+				Kind:  graph.KindImage,
+				X:     cx,
+				Y:     cy,
+				W:     dw,
+				H:     dh,
+				Label: fmt.Sprintf("Clipboard (%dx%d)", asset.NaturalW, asset.NaturalH),
+				Media: &graph.NodeMedia{AssetID: asset.ID, Fit: "contain"},
+				Style: graph.NodeStyle{Radius: 10, Shadow: true},
+			}
+			_ = a.Page().AddNode(n)
+			a.SelectedNodes = map[string]bool{n.ID: true}
+			a.notifyChanged()
+			return true
+		}
+	}
+	return false
+}
+
+// ResizeMediaNode adjusts a selected image or video node to either HD fit or 1:1 native pixel resolution.
+func (a *App) ResizeMediaNode(n *graph.Node, native bool) {
+	if n == nil || n.Media == nil {
+		return
+	}
+	asset := a.Doc().Assets[n.Media.AssetID]
+	if asset == nil || asset.NaturalW <= 0 || asset.NaturalH <= 0 {
+		return
+	}
+	a.Hist.Snapshot()
+	if native {
+		n.W = float64(asset.NaturalW)
+		n.H = float64(asset.NaturalH)
+	} else {
+		n.W, n.H = media.FitDisplaySize(asset.NaturalW, asset.NaturalH, a.Habits.Snapshot().DefaultMediaMax, media.DefaultMinDisplaySide)
+	}
+	a.notifyChanged()
 }
 
 func (a *App) singleSelectedNode() *graph.Node {

@@ -3,7 +3,8 @@
 **DrawGraph** is a native GPU-rendered diagramming desktop application and **Agent-first CLI** inspired by [draw.io](https://www.drawio.com/), written in pure Go 1.27 (`CGO_ENABLED=0`) using [MyGo](https://github.com/egoist/mygo) native UI (`ui.Painter`) and [Lobe MyGo](https://github.com/lobehub/lobe-mygo).
 
 - **Only two release targets**: **Windows x64 (`windows/amd64`) MSI** and **macOS Apple Silicon (`darwin/arm64`) DMG**.
-- **Zero WebView / Zero Electron / Zero CGO**: Instant launch, GPU-accelerated canvas rendering (Direct3D 11 on Windows, Metal on macOS).
+- **Infinite Canvas & High-Resolution Media**: Unbounded pan/zoom (`5%`–`800%`), interactive click/drag Minimap, tiled high-DPI PNG export (up to `8192×8192`), and seamless drag-and-drop or clipboard paste of **HD images** (`PNG`/`JPG`/`WebP`/`GIF`/`BMP`/`SVG`) and **videos** (`MP4`/`MOV`/`WebM`/`MKV`/`AVI`) directly as canvas nodes — preserving full native source resolution while defaulting to an aspect-fitted canvas footprint (with one-click `1:1 Native` toggle).
+- **Zero WebView / Zero Electron / Zero CGO**: Instant launch, GPU-accelerated canvas rendering (Direct3D 11 on Windows, Metal on macOS, plus hardware-accelerated `ui/video` playback).
 - **Bidirectional draw.io Compatibility**: Imports and exports `.drawio` (`mxGraphModel` / compressed & uncompressed XML) alongside native `.drawgraph` JSON.
 - **Native Agent CLI + Live IPC**: AI agents can draw entire architecture/flow diagrams via concise DSL or transactional JSON batching, export PNG/SVG/draw.io headlessly, or push updates live (`--live`) into an open GUI window.
 - **Git-Extensible SVG Icon Plugins**: Extend DrawGraph's icon library from any Git repository URL or local SVG directory (`drawgraph icon install <git-url>`), with optional `drawgraph-icons.json` manifest or automatic SVG discovery.
@@ -36,6 +37,10 @@ EOF
 go run ./cmd/drawgraph export arch.drawgraph --to arch.svg
 go run ./cmd/drawgraph export arch.drawgraph --to arch.png
 go run ./cmd/drawgraph export arch.drawgraph --to arch.drawio
+
+# Import high-resolution images or videos directly as aspect-fitted nodes
+go run ./cmd/drawgraph add-image arch.drawgraph --src design-4k.png
+go run ./cmd/drawgraph add-video arch.drawgraph --src demo.mp4
 ```
 
 ### Extend Icons from Git

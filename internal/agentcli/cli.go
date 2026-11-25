@@ -22,6 +22,7 @@ import (
 	"github.com/neko233-com/DrawGraph/internal/icons"
 	"github.com/neko233-com/DrawGraph/internal/ipc"
 	"github.com/neko233-com/DrawGraph/internal/layout"
+	"github.com/neko233-com/DrawGraph/internal/media"
 	"github.com/neko233-com/DrawGraph/internal/version"
 )
 
@@ -77,6 +78,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdValidate(rest, stdout, stderr)
 	case "add-node":
 		return cmdAddNode(rest, hb, stdout, stderr)
+	case "add-image":
+		return cmdAddMedia(rest, "image", hb, stdout, stderr)
+	case "add-video":
+		return cmdAddMedia(rest, "video", hb, stdout, stderr)
 	case "update-node":
 		return cmdUpdateNode(rest, hb, stdout, stderr)
 	case "remove-node":
@@ -127,7 +132,7 @@ func cmdSchema(args []string, reg *icons.Registry, stdout io.Writer) int {
 		"iconPacks":    packIDs,
 		"exportFormat": []string{"png", "svg", "drawio"},
 		"commands": []string{
-			"new", "inspect", "validate", "add-node", "update-node", "remove-node",
+			"new", "inspect", "validate", "add-node", "add-image", "add-video", "update-node", "remove-node",
 			"connect", "disconnect", "page", "batch", "dsl", "format",
 			"import", "export", "icon", "habits", "live", "schema", "skill",
 		},
@@ -366,6 +371,94 @@ func cmdAddNode(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
 		return emitErr(stdout, stderr, *jsonOut, "add-node", err, 1)
 	}
 	return emitResult(stdout, *jsonOut, "add-node", n, fmt.Sprintf("Added node %s (%s)\n", n.ID, n.Kind))
+}
+
+func cmdAddMedia(args []string, mediaKind string, hb *habits.Store, stdout, stderr io.Writer) int {
+	cmdName := "add-" + mediaKind
+	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	pageID := fs.String("page", "", "page id")
+	src := fs.String("src", "", "path to image or video file")
+	id := fs.String("id", "", "node id")
+	label := fs.String("label", "", "optional label/caption")
+	parent := fs.String("parent", "", "parent container node id")
+	fit := fs.String("fit", "contain", "contain | cover | fill")
+	maxSide := fs.Float64("max-side", 0, "reasonable max display side in DIPs (defaults to user habit 480)")
+	native := fs.Bool("native", false, "size node 1:1 to original pixel resolution")
+	showBar := fs.Bool("show-bar", false, "show caption footer bar")
+	loop := fs.Bool("loop", true, "loop video playback")
+	muted := fs.Bool("muted", true, "mute video audio by default")
+	x := fs.Float64("x", 80, "x coordinate")
+	y := fs.Float64("y", 80, "y coordinate")
+	live := fs.Bool("live", false, "push to live GUI")
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(reorderFlags(args)); err != nil {
+		return 2
+	}
+	if fs.NArg() < 1 || *src == "" {
+		return emitErr(stdout, stderr, *jsonOut, cmdName, fmt.Errorf("usage: drawgraph %s <file> --src <media-path>", cmdName), 2)
+	}
+	file := fs.Arg(0)
+	doc, err := loadOrCreateDoc(file, hb)
+	if err != nil {
+		return emitErr(stdout, stderr, *jsonOut, cmdName, err, 1)
+	}
+	p, err := selectPage(doc, *pageID)
+	if err != nil {
+		return emitErr(stdout, stderr, *jsonOut, cmdName, err, 2)
+	}
+	ms := *maxSide
+	if ms <= 0 {
+		ms = hb.Snapshot().DefaultMediaMax
+	}
+	var asset *graph.MediaAsset
+	var dw, dh float64
+	if mediaKind == "image" {
+		asset, dw, dh, err = media.ImportImageFile(doc, *src, ms)
+	} else {
+		asset, dw, dh, err = media.ImportVideoFile(doc, *src, ms)
+	}
+	if err != nil {
+		return emitErr(stdout, stderr, *jsonOut, cmdName, err, 1)
+	}
+	if *native && asset.NaturalW > 0 && asset.NaturalH > 0 {
+		dw, dh = float64(asset.NaturalW), float64(asset.NaturalH)
+	}
+	lbl := *label
+	if lbl == "" {
+		lbl = asset.Name
+	}
+	kind := graph.KindImage
+	if mediaKind == "video" {
+		kind = graph.KindVideo
+	}
+	n := &graph.Node{
+		ID:       *id,
+		Kind:     kind,
+		ParentID: *parent,
+		X:        *x,
+		Y:        *y,
+		W:        dw,
+		H:        dh,
+		Label:    lbl,
+		Media: &graph.NodeMedia{
+			AssetID:  asset.ID,
+			Fit:      *fit,
+			Autoplay: mediaKind == "video",
+			Loop:     *loop,
+			Muted:    *muted,
+			ShowBar:  *showBar,
+		},
+	}
+	if err := p.AddNode(n); err != nil {
+		return emitErr(stdout, stderr, *jsonOut, cmdName, err, 2)
+	}
+	if err := saveDoc(file, doc, *live, cmdName); err != nil {
+		return emitErr(stdout, stderr, *jsonOut, cmdName, err, 1)
+	}
+	return emitResult(stdout, *jsonOut, cmdName, map[string]any{
+		"node": n, "asset": asset,
+	}, fmt.Sprintf("Added %s node %s (%dx%d -> %.0fx%.0f)\n", mediaKind, n.ID, asset.NaturalW, asset.NaturalH, n.W, n.H))
 }
 
 func cmdUpdateNode(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
@@ -1361,7 +1454,7 @@ func reorderFlags(args []string) []string {
 
 func isBoolFlagName(name string) bool {
 	switch name {
-	case "json", "live", "dark", "remember", "format", "stdin", "dry-run", "no-style", "all":
+	case "json", "live", "dark", "remember", "format", "stdin", "dry-run", "no-style", "all", "native", "show-bar", "loop", "muted":
 		return true
 	}
 	return false
@@ -1404,6 +1497,8 @@ Diagram Commands:
   inspect <file> [--page id] [--live]       Inspect nodes, edges, bounds, and validation issues
   validate <file>                           Verify graph integrity and overlap warnings
   add-node <file> --label ... [flags]       Add a node (shapes, containers, icons)
+  add-image <file> --src <img-path> [flags] Import HD image with aspect-preserving node size
+  add-video <file> --src <vid-path> [flags] Import video node (MP4/MOV/WebM/MKV)
   update-node <file> --id ... [flags]       Update geometry, style, label, or icon
   remove-node <file> --id ...               Remove node and attached edges
   connect <file> --from A --to B [flags]    Connect two nodes

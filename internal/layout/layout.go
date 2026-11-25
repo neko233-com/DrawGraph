@@ -367,6 +367,18 @@ func harmonizeNodes(page *graph.Page, preset habits.Preset, dark bool) int {
 			}
 			continue
 		}
+		if n.Kind == graph.KindImage || n.Kind == graph.KindVideo {
+			if n.Style.Stroke == "" {
+				n.Style.Stroke = base.Stroke
+			}
+			n.Style.StrokeWidth = base.StrokeWidth
+			if n.Style.Radius == 0 {
+				n.Style.Radius = base.Radius
+			}
+			n.Style.Shadow = base.Shadow
+			changed++
+			continue
+		}
 		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
 			if n.Style.Stroke == "" {
 				n.Style.Stroke = base.Stroke
@@ -400,7 +412,7 @@ func harmonizeNodes(page *graph.Page, preset habits.Preset, dark bool) int {
 
 func fitNodeSizes(page *graph.Page, grid float64) {
 	for _, n := range page.Nodes {
-		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane || n.Kind == graph.KindText || n.Locked {
+		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane || n.Kind == graph.KindText || n.Kind == graph.KindImage || n.Kind == graph.KindVideo || n.Locked {
 			continue
 		}
 		lines := strings.Split(n.Label, "\n")

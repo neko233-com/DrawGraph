@@ -142,6 +142,7 @@ type Profile struct {
 	NormalizeSizes     bool    `json:"normalizeSizes"`
 	HarmonizePalette   bool    `json:"harmonizePalette"`
 	ContainerPadding   float64 `json:"containerPadding"`
+	DefaultMediaMax    float64 `json:"defaultMediaMax"` // Reasonable max canvas display side (DIPs) for imported HD images/videos
 
 	// Workspace & Asset Habits
 	SidebarOpen      bool           `json:"sidebarOpen"`
@@ -184,6 +185,7 @@ func DefaultProfile() *Profile {
 		NormalizeSizes:     true,
 		HarmonizePalette:   true,
 		ContainerPadding:   36,
+		DefaultMediaMax:    480,
 		SidebarOpen:        true,
 		InspectorOpen:      true,
 		MinimapOpen:        true,
@@ -577,6 +579,9 @@ func mergeMissingDefaults(p *Profile) {
 	}
 	if p.ContainerPadding <= 0 {
 		p.ContainerPadding = def.ContainerPadding
+	}
+	if p.DefaultMediaMax <= 0 {
+		p.DefaultMediaMax = def.DefaultMediaMax
 	}
 	if p.IconUsage == nil {
 		p.IconUsage = map[string]int{}

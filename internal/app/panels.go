@@ -52,6 +52,9 @@ func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
 		if action.ActionIcon(c, lucide.Save(), action.ActionIconProps{Size: theme.Small, Title: "Save"}).Clicked() {
 			a.SaveToCurrentOrDialog(false)
 		}
+		if iconButton(c, lucide.ImagePlus(), "Media", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+			a.ImportMediaFromDialog()
+		}
 		if action.Button(c, "Export SVG", action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
 			a.ExportDialog("svg")
 		}
@@ -443,6 +446,10 @@ func (a *App) nodeInspector(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
 			})
 		}
 
+		if (n.Kind == graph.KindImage || n.Kind == graph.KindVideo) && n.Media != nil {
+			a.mediaInspectorSection(c, tk, n)
+		}
+
 		ui.Row(c).Gap(8).Children(func() {
 			if action.Button(c, "Save as Habit", action.ButtonProps{Variant: action.Filled, Size: theme.Small}).Clicked() {
 				a.Habits.RecordNodeHabit(n)
@@ -571,19 +578,108 @@ func (a *App) documentInspector(c *ui.Context, tk *theme.Tokens) {
 	})
 }
 
+func (a *App) mediaInspectorSection(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
+	asset := a.Doc().Assets[n.Media.AssetID]
+	ui.Column(c).Gap(8).Padding(10).Radius(8).Background(tk.FillTertiary).Children(func() {
+		ui.Text(c, "HD MEDIA & RESOLUTION").FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
+		if asset != nil && asset.NaturalW > 0 {
+			meta := fmt.Sprintf("Source: %d × %d px", asset.NaturalW, asset.NaturalH)
+			if asset.DurationSec > 0 {
+				meta += fmt.Sprintf(" · %.1fs", asset.DurationSec)
+			}
+			ui.Text(c, meta).FontSize(11).TextColor(tk.TextSecondary)
+			ui.Row(c).Gap(6).Children(func() {
+				if action.Button(c, "HD Fit", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+					a.ResizeMediaNode(n, false)
+				}
+				if action.Button(c, fmt.Sprintf("1:1 (%dx%d)", asset.NaturalW, asset.NaturalH), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+					a.ResizeMediaNode(n, true)
+				}
+			})
+		}
+
+		fit := n.Media.Fit
+		if fit == "" {
+			fit = "contain"
+		}
+		ui.Column(c).Gap(4).Children(func() {
+			ui.Text(c, "Scale Mode").FontSize(11).TextColor(tk.TextTertiary)
+			field.Select(c, &fit, field.SelectProps{
+				Options: []field.SelectOption{
+					{Value: "contain", Label: "Contain (Full Aspect)"},
+					{Value: "cover", Label: "Cover (Crop Fill)"},
+					{Value: "fill", Label: "Stretch Fill"},
+				},
+				Size: theme.Small,
+			})
+			if fit != n.Media.Fit {
+				a.Hist.Snapshot()
+				n.Media.Fit = fit
+				a.notifyChanged()
+			}
+		})
+
+		showBar := n.Media.ShowBar
+		if choice.Checkbox(c, &showBar, "Show caption footer bar", choice.CheckboxProps{}).Changed() {
+			a.Hist.Snapshot()
+			n.Media.ShowBar = showBar
+			a.notifyChanged()
+		}
+
+		if n.Kind == graph.KindVideo {
+			if vp := a.ensureVideoPlayer(n); vp != nil && vp.player != nil {
+				lbl := "Pause Video"
+				if !vp.player.Playing() {
+					lbl = "Play Video"
+				}
+				if action.Button(c, lbl, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Clicked() {
+					if vp.player.Playing() {
+						vp.player.Pause()
+					} else {
+						vp.player.Play()
+					}
+				}
+			}
+			loop := n.Media.Loop
+			if choice.Checkbox(c, &loop, "Loop video", choice.CheckboxProps{}).Changed() {
+				n.Media.Loop = loop
+				if vp := a.videoPlayers[n.ID]; vp != nil && vp.player != nil {
+					vp.player.SetLoop(loop)
+				}
+			}
+			muted := n.Media.Muted
+			if choice.Checkbox(c, &muted, "Muted", choice.CheckboxProps{}).Changed() {
+				n.Media.Muted = muted
+				if vp := a.videoPlayers[n.ID]; vp != nil && vp.player != nil {
+					vp.player.SetMuted(muted)
+				}
+			}
+		}
+	})
+}
+
 func (a *App) statusBar(c *ui.Context, tk *theme.Tokens) {
 	ui.Row(c).Height(28).Shrink(0).Gap(12).AlignItems(ui.Center).Padding(0, 12).
 		Background(tk.BgContainer).BorderWidth(1, 0, 0, 0).BorderColor(tk.BorderSecondary).Children(func() {
 		ui.Text(c, fmt.Sprintf("Tool: %s", a.Tool)).FontSize(11).TextColor(tk.TextTertiary)
 		ui.Text(c, fmt.Sprintf("Nodes: %d", len(a.Page().Nodes))).FontSize(11).TextColor(tk.TextTertiary)
 		ui.Text(c, fmt.Sprintf("Edges: %d", len(a.Page().Edges))).FontSize(11).TextColor(tk.TextTertiary)
-		ui.Text(c, fmt.Sprintf("Icon Packs: %d", len(a.Icons.Packs()))).FontSize(11).TextColor(tk.TextTertiary)
+		ui.Text(c, fmt.Sprintf("Assets: %d", len(a.Doc().Assets))).FontSize(11).TextColor(tk.TextTertiary)
+		cx, cy := -a.Cam.X, -a.Cam.Y
+		if a.CanvasRect.W > 0 && a.Cam.Zoom > 0 {
+			cx += float64(a.CanvasRect.W) / (2 * a.Cam.Zoom)
+			cy += float64(a.CanvasRect.H) / (2 * a.Cam.Zoom)
+		}
+		ui.Text(c, fmt.Sprintf("Canvas (%.0f, %.0f) · %d%%", cx, cy, int(a.Cam.Zoom*100))).FontSize(11).TextColor(tk.TextQuaternary)
+		if action.Button(c, "Origin", action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			a.ResetOrigin()
+		}
 		if a.Habits.Snapshot().AutoRemember {
 			ui.Text(c, "Habit Memory: ON").FontSize(11).TextColor(tk.Success)
 		}
 		ui.Spacer(c)
 		if a.FilePath != "" {
-			ui.Text(c, a.FilePath).FontSize(11).TextColor(tk.TextQuaternary).SingleLine().MaxWidth(380)
+			ui.Text(c, a.FilePath).FontSize(11).TextColor(tk.TextQuaternary).SingleLine().MaxWidth(340)
 		} else {
 			ui.Text(c, "DrawGraph "+version.Version).FontSize(11).TextColor(tk.TextQuaternary)
 		}
@@ -731,6 +827,15 @@ func (a *App) habitsDrawer(c *ui.Context, tk *theme.Tokens) {
 						_ = a.Habits.Update(func(pr *habits.Profile) { pr.GapY = gy })
 					}
 				})
+			})
+
+			mediaMax := p.DefaultMediaMax
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, "Imported HD Image/Video Initial Max Size (DIPs)").FontSize(11).TextColor(tk.TextTertiary)
+				field.InputNumber(c, &mediaMax, field.InputNumberProps{Min: 160, Max: 1920, Step: 40, Size: theme.Small})
+				if mediaMax != p.DefaultMediaMax {
+					_ = a.Habits.Update(func(pr *habits.Profile) { pr.DefaultMediaMax = mediaMax })
+				}
 			})
 
 			ui.Row(c).Gap(8).Children(func() {

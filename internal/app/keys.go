@@ -69,6 +69,15 @@ func (a *App) handleShortcuts(c *ui.Context) {
 	if c.Shortcut(cmd, ui.KeyO) {
 		a.OpenFromDialog()
 	}
+	if c.Shortcut(cmd, ui.KeyU) {
+		a.ImportMediaFromDialog()
+	}
+	if c.Shortcut(cmd, ui.KeyV) {
+		a.PasteClipboardMedia()
+	}
+	if c.Shortcut(cmd|shift, ui.KeyH) {
+		a.ResetOrigin()
+	}
 	if c.Shortcut(cmd, ui.KeyN) {
 		a.NewBlankDocument()
 	}

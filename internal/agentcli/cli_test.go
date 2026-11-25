@@ -3,6 +3,8 @@ package agentcli_test
 import (
 	"bytes"
 	"encoding/json"
+	"image"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,3 +199,43 @@ func (f *fakeIPCHandler) ReplaceDocument(d *graph.Document, _ string) error {
 	return nil
 }
 func (f *fakeIPCHandler) ReloadIcons() error { return nil }
+
+func TestCLIMediaCommandsAndDSLMedia(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	diag := filepath.Join(tmp, "media.drawgraph")
+
+	imgPath := filepath.Join(tmp, "1080p.png")
+	var pngBuf bytes.Buffer
+	_ = png.Encode(&pngBuf, image.NewRGBA(image.Rect(0, 0, 1920, 1080)))
+	_ = os.WriteFile(imgPath, pngBuf.Bytes(), 0o644)
+
+	vidPath := filepath.Join(tmp, "walkthrough.mp4")
+	_ = os.WriteFile(vidPath, []byte("ftypmp42"), 0o644)
+
+	code, out, errStr := runCLI(t, home, "", "add-image", diag, "--id", "hero", "--src", imgPath, "--json")
+	if code != 0 {
+		t.Fatalf("add-image failed: %s %s", out, errStr)
+	}
+	code, out, errStr = runCLI(t, home, "", "add-video", diag, "--id", "clip", "--src", vidPath, "--x", "700", "--json")
+	if code != 0 {
+		t.Fatalf("add-video failed: %s %s", out, errStr)
+	}
+	code, out, errStr = runCLI(t, home, "hero -> clip : \"Demo\"\n", "dsl", diag, "--stdin", "--format", "--json")
+	if code != 0 {
+		t.Fatalf("dsl format with media failed: %s %s", out, errStr)
+	}
+
+	doc, err := graph.LoadFile(diag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hero := doc.ActivePage().NodeByID("hero")
+	clip := doc.ActivePage().NodeByID("clip")
+	if hero == nil || hero.W != 480 || hero.H != 270 || doc.Assets[hero.Media.AssetID].NaturalW != 1920 {
+		t.Fatalf("hero image sizing/resolution mismatch: %+v", hero)
+	}
+	if clip == nil || clip.Kind != graph.KindVideo {
+		t.Fatalf("clip video node missing: %+v", clip)
+	}
+}

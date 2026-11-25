@@ -36,6 +36,8 @@ const (
 	KindContainer     NodeKind = "container"
 	KindSwimlane      NodeKind = "swimlane"
 	KindIcon          NodeKind = "icon"
+	KindImage         NodeKind = "image"
+	KindVideo         NodeKind = "video"
 )
 
 // AllNodeKinds lists every built-in node shape in display order.
@@ -55,6 +57,8 @@ var AllNodeKinds = []NodeKind{
 	KindContainer,
 	KindSwimlane,
 	KindIcon,
+	KindImage,
+	KindVideo,
 }
 
 // DashStyle specifies stroke dash pattern.
@@ -146,7 +150,30 @@ type EdgeStyle struct {
 	TextColor   string    `json:"textColor,omitempty"`
 }
 
-// Node represents a shape, container, text block, or icon element on a page.
+// NodeMedia binds an image or video node to a MediaAsset in Document.Assets.
+type NodeMedia struct {
+	AssetID  string `json:"assetId,omitempty"`
+	Fit      string `json:"fit,omitempty"` // "contain" (default), "cover", "fill"
+	Autoplay bool   `json:"autoplay,omitempty"`
+	Loop     bool   `json:"loop,omitempty"`
+	Muted    bool   `json:"muted,omitempty"`
+	ShowBar  bool   `json:"showBar,omitempty"`
+}
+
+// MediaAsset holds full-resolution image or video metadata/payload shared by nodes.
+type MediaAsset struct {
+	ID          string  `json:"id"`
+	Kind        string  `json:"kind"` // "image" or "video"
+	Name        string  `json:"name,omitempty"`
+	MimeType    string  `json:"mimeType,omitempty"`
+	FilePath    string  `json:"filePath,omitempty"`
+	DataURL     string  `json:"dataUrl,omitempty"`
+	NaturalW    int     `json:"naturalW,omitempty"`
+	NaturalH    int     `json:"naturalH,omitempty"`
+	DurationSec float64 `json:"durationSec,omitempty"`
+}
+
+// Node represents a shape, container, text block, icon, or media element on a page.
 type Node struct {
 	ID        string            `json:"id"`
 	Kind      NodeKind          `json:"kind"`
@@ -160,6 +187,7 @@ type Node struct {
 	Label     string            `json:"label,omitempty"`
 	Sublabel  string            `json:"sublabel,omitempty"`
 	Icon      *IconRef          `json:"icon,omitempty"`
+	Media     *NodeMedia        `json:"media,omitempty"`
 	Style     NodeStyle         `json:"style,omitempty"`
 	Locked    bool              `json:"locked,omitempty"`
 	Collapsed bool              `json:"collapsed,omitempty"`
@@ -201,17 +229,18 @@ type Page struct {
 
 // Document is the root persisted diagram file (.drawgraph / .drawgraph.json).
 type Document struct {
-	FormatVersion  int               `json:"formatVersion"`
-	Title          string            `json:"title"`
-	ActivePageID   string            `json:"activePageId"`
-	GridSize       float64           `json:"gridSize"`
-	SnapToGrid     bool              `json:"snapToGrid"`
-	ThemeMode      string            `json:"themeMode,omitempty"` // "auto", "light", "dark"
-	DefaultRouting RoutingStyle      `json:"defaultRouting,omitempty"`
-	StylePreset    string            `json:"stylePreset,omitempty"`
-	Pages          []*Page           `json:"pages"`
-	Meta           map[string]string `json:"meta,omitempty"`
-	UpdatedAt      time.Time         `json:"updatedAt"`
+	FormatVersion  int                    `json:"formatVersion"`
+	Title          string                 `json:"title"`
+	ActivePageID   string                 `json:"activePageId"`
+	GridSize       float64                `json:"gridSize"`
+	SnapToGrid     bool                   `json:"snapToGrid"`
+	ThemeMode      string                 `json:"themeMode,omitempty"` // "auto", "light", "dark"
+	DefaultRouting RoutingStyle           `json:"defaultRouting,omitempty"`
+	StylePreset    string                 `json:"stylePreset,omitempty"`
+	Pages          []*Page                `json:"pages"`
+	Assets         map[string]*MediaAsset `json:"assets,omitempty"`
+	Meta           map[string]string      `json:"meta,omitempty"`
+	UpdatedAt      time.Time              `json:"updatedAt"`
 }
 
 // NewDocument creates a ready-to-edit document with one blank page.
@@ -228,6 +257,7 @@ func NewDocument(title string) *Document {
 		ThemeMode:      "auto",
 		DefaultRouting: RouteOrthogonal,
 		StylePreset:    "lobe-clean",
+		Assets:         map[string]*MediaAsset{},
 		UpdatedAt:      time.Now().UTC(),
 		Pages: []*Page{
 			{
@@ -269,6 +299,9 @@ func (d *Document) Normalize() {
 	if len(d.Pages) == 0 {
 		d.Pages = []*Page{{ID: "page-1", Name: "Page-1"}}
 	}
+	if d.Assets == nil {
+		d.Assets = map[string]*MediaAsset{}
+	}
 	hasActive := false
 	for i, p := range d.Pages {
 		if strings.TrimSpace(p.ID) == "" {
@@ -307,10 +340,21 @@ func NormalizeNode(n *Node) {
 		n.Kind = KindRounded
 	}
 	if n.W <= 0 {
-		n.W = 160
+		if n.Kind == KindImage || n.Kind == KindVideo {
+			n.W = 320
+		} else {
+			n.W = 160
+		}
 	}
 	if n.H <= 0 {
-		n.H = 72
+		if n.Kind == KindImage || n.Kind == KindVideo {
+			n.H = 180
+		} else {
+			n.H = 72
+		}
+	}
+	if n.Media != nil && n.Media.Fit == "" {
+		n.Media.Fit = "contain"
 	}
 	if n.Style.Opacity <= 0 || n.Style.Opacity > 1 {
 		n.Style.Opacity = 1

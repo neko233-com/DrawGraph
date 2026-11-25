@@ -27,6 +27,13 @@ func TestRoundTripDrawioXML(t *testing.T) {
 	_ = p.AddNode(&graph.Node{
 		ID: "db", Kind: graph.KindCylinder, ParentID: "vpc", X: 340, Y: 100, W: 140, H: 80, Label: "Orders DB",
 	})
+	_ = p.AddNode(&graph.Node{
+		ID: "pic", Kind: graph.KindImage, X: 600, Y: 100, W: 320, H: 180, Label: "Preview",
+		Media: &graph.NodeMedia{AssetID: "img-abc", Fit: "contain"},
+	})
+	doc.Assets["img-abc"] = &graph.MediaAsset{
+		ID: "img-abc", Kind: "image", Name: "Preview", DataURL: "data:image/png;base64,iVBORw0KGgo=", NaturalW: 1920, NaturalH: 1080,
+	}
 	_ = p.AddEdge(&graph.Edge{
 		ID: "e1", SourceID: "api", TargetID: "db", Label: "SQL",
 		Routing: graph.RouteOrthogonal, EndArrow: graph.ArrowClassic,
@@ -65,6 +72,10 @@ func TestRoundTripDrawioXML(t *testing.T) {
 	e1 := ip.EdgeByID("e1")
 	if e1 == nil || len(e1.Waypoints) != 1 || e1.Label != "SQL" {
 		t.Fatalf("imported edge mismatch: %+v", e1)
+	}
+	pic := ip.NodeByID("pic")
+	if pic == nil || pic.Kind != graph.KindImage || pic.Media == nil || imported.Assets["img-abc"] == nil {
+		t.Fatalf("lost image node or asset on drawio roundtrip: %+v assets=%+v", pic, imported.Assets)
 	}
 }
 

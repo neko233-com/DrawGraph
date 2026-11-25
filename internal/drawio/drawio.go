@@ -186,7 +186,7 @@ func ExportXML(doc *graph.Document) ([]byte, error) {
 			cells = append(cells, mxCell{
 				ID:     n.ID,
 				Value:  n.Label,
-				Style:  nodeStyleToDrawio(n),
+				Style:  nodeStyleToDrawio(doc, n),
 				Vertex: "1",
 				Parent: parent,
 				Geometry: &mxGeometry{
@@ -346,6 +346,35 @@ func convertModel(pageID, pageName string, model *mxGraphModel, applyGrid bool, 
 			if icon := st["drawgraphIcon"]; icon != "" {
 				node.Icon = graph.ParseIconRef(icon)
 			}
+			if aid := st["drawgraphAssetId"]; aid != "" {
+				if doc.Assets == nil {
+					doc.Assets = map[string]*graph.MediaAsset{}
+				}
+				node.Media = &graph.NodeMedia{AssetID: aid, Fit: st["drawgraphFit"]}
+				if imgVal := st["image"]; imgVal != "" && doc.Assets[aid] == nil {
+					dataURL := imgVal
+					if strings.HasPrefix(dataURL, "data:") && !strings.Contains(dataURL, ";base64,") {
+						dataURL = strings.Replace(dataURL, ",", ";base64,", 1)
+					}
+					doc.Assets[aid] = &graph.MediaAsset{
+						ID:       aid,
+						Kind:     "image",
+						Name:     node.Label,
+						DataURL:  dataURL,
+						NaturalW: int(w),
+						NaturalH: int(h),
+					}
+				} else if fileVal := st["drawgraphFile"]; fileVal != "" && doc.Assets[aid] == nil {
+					doc.Assets[aid] = &graph.MediaAsset{
+						ID:       aid,
+						Kind:     string(node.Kind),
+						Name:     node.Label,
+						FilePath: fileVal,
+						NaturalW: int(w),
+						NaturalH: int(h),
+					}
+				}
+			}
 			graph.NormalizeNode(node)
 			p.Nodes = append(p.Nodes, node)
 			continue
@@ -473,7 +502,7 @@ func drawioArrow(raw string, fallback graph.ArrowStyle) graph.ArrowStyle {
 	}
 }
 
-func nodeStyleToDrawio(n *graph.Node) string {
+func nodeStyleToDrawio(doc *graph.Document, n *graph.Node) string {
 	var parts []string
 	switch n.Kind {
 	case graph.KindRounded:
@@ -504,10 +533,31 @@ func nodeStyleToDrawio(n *graph.Node) string {
 		parts = append(parts, "rounded=1", "whiteSpace=wrap", "html=1", "container=1")
 	case graph.KindIcon:
 		parts = append(parts, "rounded=1", "whiteSpace=wrap", "html=1")
+	case graph.KindImage:
+		parts = append(parts, "shape=image", "imageAspect=0", "aspect=fixed", "verticalLabelPosition=bottom", "verticalAlign=top", "html=1")
+		if n.Media != nil && doc != nil {
+			if a := doc.Assets[n.Media.AssetID]; a != nil && a.DataURL != "" {
+				// draw.io style strings use ';' as property separators.
+				parts = append(parts, "image="+strings.Replace(a.DataURL, ";base64,", ",", 1))
+			}
+		}
+	case graph.KindVideo:
+		parts = append(parts, "rounded=1", "whiteSpace=wrap", "html=1")
 	default:
 		parts = append(parts, "rounded=0", "whiteSpace=wrap", "html=1")
 	}
 	parts = append(parts, "drawgraphKind="+string(n.Kind))
+	if n.Media != nil && n.Media.AssetID != "" {
+		parts = append(parts, "drawgraphAssetId="+n.Media.AssetID)
+		if n.Media.Fit != "" {
+			parts = append(parts, "drawgraphFit="+n.Media.Fit)
+		}
+		if doc != nil {
+			if a := doc.Assets[n.Media.AssetID]; a != nil && a.FilePath != "" {
+				parts = append(parts, "drawgraphFile="+strings.ReplaceAll(a.FilePath, ";", ""))
+			}
+		}
+	}
 	if n.Style.Fill != "" {
 		parts = append(parts, "fillColor="+n.Style.Fill)
 	}

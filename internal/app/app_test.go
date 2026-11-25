@@ -1,6 +1,11 @@
 package app_test
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -226,5 +231,86 @@ func TestCanvasDragResizeInlineEditAndMultiPage(t *testing.T) {
 	tt.Frame()
 	if len(a.Doc().Pages) != 2 {
 		t.Fatalf("expected 2 pages after Add Page, got %d", len(a.Doc().Pages))
+	}
+}
+
+func TestInfiniteCanvasDropImagesVideosAndNativeResize(t *testing.T) {
+	a, tt, _ := newTestWorkbench(t)
+	tmp := t.TempDir()
+
+	// Write a 1920x1080 HD image and an .mp4 video file on disk.
+	imgPath := filepath.Join(tmp, "design-hd.png")
+	srcImg := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
+	for y := 0; y < 1080; y += 20 {
+		for x := 0; x < 1920; x += 20 {
+			srcImg.Set(x, y, color.RGBA{R: 59, G: 130, B: 246, A: 255})
+		}
+	}
+	var pngBuf bytes.Buffer
+	_ = png.Encode(&pngBuf, srcImg)
+	_ = os.WriteFile(imgPath, pngBuf.Bytes(), 0o644)
+
+	vidPath := filepath.Join(tmp, "preview.mp4")
+	_ = os.WriteFile(vidPath, []byte("ftypisom"), 0o644)
+
+	// Pan deep into negative infinite canvas coordinates and zoom way out & way in!
+	a.Cam.X = -4500
+	a.Cam.Y = -2800
+	a.Cam.Zoom = 0.05
+	tt.Frame()
+	if a.Cam.Zoom != 0.05 {
+		t.Fatalf("expected infinite canvas zoom 0.05, got %v", a.Cam.Zoom)
+	}
+	tt.Key(ui.Cmd|ui.Shift, ui.KeyH) // Reset Origin
+	tt.Frame()
+	if a.Cam.Zoom != 1 || a.Cam.X != 24 || a.Cam.Y != 24 {
+		t.Fatalf("ResetOrigin failed: %+v", a.Cam)
+	}
+
+	cv, ok := tt.Find("Canvas")
+	if !ok {
+		t.Fatal("Canvas element not found")
+	}
+
+	// Drag-and-drop both HD image and video directly onto Canvas!
+	tt.DropFiles(cv.X+300, cv.Y+240, imgPath, vidPath)
+	tt.Frame()
+	if len(a.Page().Nodes) != 2 {
+		t.Fatalf("expected 2 media nodes after DropFiles, got %d", len(a.Page().Nodes))
+	}
+	imgNode := a.Page().Nodes[0]
+	vidNode := a.Page().Nodes[1]
+	if imgNode.Kind != graph.KindImage || imgNode.W != 480 || imgNode.H != 270 {
+		t.Fatalf("dropped HD image node mismatch: %+v", imgNode)
+	}
+	if a.Doc().Assets[imgNode.Media.AssetID].NaturalW != 1920 || a.Doc().Assets[imgNode.Media.AssetID].NaturalH != 1080 {
+		t.Fatalf("lost full 1920x1080 asset metadata")
+	}
+	if vidNode.Kind != graph.KindVideo {
+		t.Fatalf("expected dropped video node, got %s", vidNode.Kind)
+	}
+
+	// Select only image node -> click Inspector "1:1 (1920x1080)" -> switches to native HD pixels!
+	a.SelectedNodes = map[string]bool{imgNode.ID: true}
+	tt.Frame()
+	if err := tt.Click("1:1 (1920x1080)"); err != nil {
+		t.Fatalf("click 1:1 native resize: %v", err)
+	}
+	tt.Frame()
+	if imgNode.W != 1920 || imgNode.H != 1080 {
+		t.Fatalf("expected 1:1 native 1920x1080, got %gx%g", imgNode.W, imgNode.H)
+	}
+	if err := tt.Click("HD Fit"); err != nil {
+		t.Fatalf("click HD Fit: %v", err)
+	}
+	tt.Frame()
+	if imgNode.W != 480 || imgNode.H != 270 {
+		t.Fatalf("expected HD Fit 480x270, got %gx%g", imgNode.W, imgNode.H)
+	}
+
+	// Verify GPU image renders cleanly in offscreen UI tester.
+	frame := tt.Image()
+	if frame == nil || frame.Bounds().Dx() < 800 {
+		t.Fatalf("unexpected rendered UI image: %v", frame)
 	}
 }

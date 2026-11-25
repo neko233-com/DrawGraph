@@ -2,11 +2,13 @@ package agentcli
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/neko233-com/DrawGraph/internal/graph"
 	"github.com/neko233-com/DrawGraph/internal/habits"
+	"github.com/neko233-com/DrawGraph/internal/media"
 )
 
 // ApplyDSL parses concise line-oriented DrawGraph DSL statements and mutates page.
@@ -208,6 +210,104 @@ func ApplyDSL(doc *graph.Document, page *graph.Page, src string, hb *habits.Stor
 				}
 				addedNodes++
 			}
+		case "image", "video":
+			if len(tokens) < 3 {
+				return addedNodes, addedEdges, fmt.Errorf("line %d: %s requires <id> <srcPath>", lineNo+1, kw)
+			}
+			id := tokens[1]
+			srcPath := tokens[2]
+			prof := hb.Snapshot()
+			maxSide := prof.DefaultMediaMax
+			nativeSz := false
+			fit := "contain"
+			label := filepath.Base(srcPath)
+			parent := ""
+			loop := true
+			muted := true
+			var xOpt, yOpt *float64
+
+			for _, attr := range tokens[3:] {
+				k, v, ok := strings.Cut(attr, ":")
+				if !ok {
+					k, v, ok = strings.Cut(attr, "=")
+				}
+				if !ok {
+					continue
+				}
+				switch strings.ToLower(k) {
+				case "label":
+					label = v
+				case "parent":
+					parent = v
+				case "fit":
+					fit = v
+				case "native":
+					nativeSz = v == "true" || v == "1"
+				case "loop":
+					loop = v == "true" || v == "1"
+				case "muted":
+					muted = v == "true" || v == "1"
+				case "max", "max-side":
+					if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+						maxSide = f
+					}
+				case "x":
+					if f, err := strconv.ParseFloat(v, 64); err == nil {
+						xOpt = &f
+					}
+				case "y":
+					if f, err := strconv.ParseFloat(v, 64); err == nil {
+						yOpt = &f
+					}
+				}
+			}
+
+			var asset *graph.MediaAsset
+			var dw, dh float64
+			var merr error
+			if kw == "image" {
+				asset, dw, dh, merr = media.ImportImageFile(doc, srcPath, maxSide)
+			} else {
+				asset, dw, dh, merr = media.ImportVideoFile(doc, srcPath, maxSide)
+			}
+			if merr != nil {
+				return addedNodes, addedEdges, fmt.Errorf("line %d: %w", lineNo+1, merr)
+			}
+			if nativeSz && asset.NaturalW > 0 && asset.NaturalH > 0 {
+				dw, dh = float64(asset.NaturalW), float64(asset.NaturalH)
+			}
+			x, y := float64(80+len(page.Nodes)*40), 80.0
+			if xOpt != nil {
+				x = *xOpt
+			}
+			if yOpt != nil {
+				y = *yOpt
+			}
+			kind := graph.KindImage
+			if kw == "video" {
+				kind = graph.KindVideo
+			}
+			n := &graph.Node{
+				ID:       id,
+				Kind:     kind,
+				ParentID: parent,
+				X:        x,
+				Y:        y,
+				W:        dw,
+				H:        dh,
+				Label:    label,
+				Media: &graph.NodeMedia{
+					AssetID:  asset.ID,
+					Fit:      fit,
+					Autoplay: kw == "video",
+					Loop:     loop,
+					Muted:    muted,
+				},
+			}
+			if err := page.AddNode(n); err != nil {
+				return addedNodes, addedEdges, fmt.Errorf("line %d: %w", lineNo+1, err)
+			}
+			addedNodes++
 		default:
 			return addedNodes, addedEdges, fmt.Errorf("line %d: unknown statement %q", lineNo+1, tokens[0])
 		}

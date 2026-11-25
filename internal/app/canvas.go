@@ -14,7 +14,10 @@ import (
 )
 
 func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
-	ui.Box(c).Grow(1).Basis(0).MinHeight(0).Children(func() {
+	wrap := ui.Box(c.Key("canvas-wrap")).Grow(1).Basis(0).MinHeight(0)
+	dragOver := wrap.FileDragOver()
+	dropped := wrap.DroppedFiles()
+	wrap.Children(func() {
 		cv := ui.Box(c.Key("canvas")).Fill().
 			Focusable().FocusRing(false).
 			Bind(&a.CanvasHandle).
@@ -33,6 +36,8 @@ func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
 				Doc:            a.Doc(),
 				Page:           a.Page(),
 				Icons:          a.Icons,
+				ResolveMedia:   a.resolveMedia,
+				ActiveVideos:   a.activeVideoMap(),
 				Cam:            a.Cam,
 				Dark:           a.DarkActive,
 				ShowGrid:       a.ShowGrid,
@@ -47,11 +52,32 @@ func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
 			return a.handleCanvasInput(c, ev)
 		})
 
+		a.videoOverlayLayer(c, tk)
+
+		if dragOver {
+			ui.Box(c.Key("drop-overlay")).Absolute().Top(12).Left(12).Right(12).Bottom(12).Radius(12).
+				Background(tk.Primary.Alpha(0.10)).BorderWidth(2).BorderColor(tk.Primary).Center().Children(func() {
+				ui.Box(c).Padding(12, 20).Radius(10).Background(tk.BgElevated).BorderWidth(1).BorderColor(tk.Primary).Children(func() {
+					ui.Text(c, "Drop images or videos to create high-resolution nodes").FontSize(14).FontWeight(600).TextColor(tk.Primary)
+				})
+			})
+		}
+
 		a.inlineTextEditor(c, tk)
 		if a.MinimapOpen {
 			a.minimapOverlay(c, tk)
 		}
 	})
+
+	if len(dropped) > 0 {
+		localRect := ui.Rect{X: 0, Y: 0, W: max(1, a.CanvasRect.W), H: max(1, a.CanvasRect.H)}
+		px, py := a.lastPointerLocal[0], a.lastPointerLocal[1]
+		if px <= 0 && py <= 0 {
+			px, py = localRect.W/2, localRect.H/2
+		}
+		dropWorld := a.Cam.ScreenToWorld(localRect, px, py)
+		a.DropMediaFiles(dropped, &dropWorld)
+	}
 }
 
 func (a *App) canvasCursor() ui.Cursor {
@@ -101,6 +127,7 @@ func (a *App) handleCanvasInput(c *ui.Context, ev ui.InputEvent) bool {
 		return true
 
 	case ui.InputPointerMove:
+		a.lastPointerLocal = [2]float32{ev.X, ev.Y}
 		if a.drag == dragNone {
 			if hit := a.Page().HitNode(worldPt); hit != nil {
 				a.HoveredNodeID = hit.ID
@@ -277,10 +304,18 @@ func (a *App) handleDragMove(ev ui.InputEvent, worldPt geo.Vec) {
 				n.H = math.Max(minSz, orig.H+dy)
 				n.X = orig.X + orig.W - n.W
 			}
-			if a.Doc().SnapToGrid {
+			if a.Doc().SnapToGrid && n.Kind != graph.KindImage && n.Kind != graph.KindVideo {
 				g := a.Doc().GridSize
 				n.W = math.Max(minSz, geo.Snap(n.W, g))
 				n.H = math.Max(minSz, geo.Snap(n.H, g))
+			}
+			// Preserve natural aspect ratio when resizing media nodes unless Shift is held.
+			if (n.Kind == graph.KindImage || n.Kind == graph.KindVideo) && ev.Mods&ui.Shift == 0 && orig.H > 0 {
+				ratio := orig.W / orig.H
+				n.H = math.Max(minSz, math.Round(n.W/ratio))
+				if a.dragCorner == 0 || a.dragCorner == 1 {
+					n.Y = orig.Y + orig.H - n.H
+				}
 			}
 		}
 	case dragConnect:
@@ -378,51 +413,138 @@ func (a *App) commitInlineEdit() {
 	a.EditingNodeID = ""
 }
 
+func (a *App) videoOverlayLayer(c *ui.Context, tk *theme.Tokens) {
+	if a.Host == nil || a.Host.Window() == nil || a.CanvasRect.W <= 0 {
+		return
+	}
+	localRect := ui.Rect{X: 0, Y: 0, W: a.CanvasRect.W, H: a.CanvasRect.H}
+	z := float32(a.Cam.Zoom)
+	for _, n := range a.Page().Nodes {
+		if n.Kind != graph.KindVideo || n.Media == nil {
+			continue
+		}
+		vp := a.ensureVideoPlayer(n)
+		if vp == nil || vp.player == nil || !vp.player.Ready() {
+			continue
+		}
+		sx, sy := a.Cam.WorldToScreen(localRect, geo.V(n.X, n.Y))
+		sw, sh := float32(n.W)*z, float32(n.H)*z
+		if sx+sw < 0 || sy+sh < 0 || sx > localRect.W || sy > localRect.H {
+			continue
+		}
+		fit := ui.Contain
+		if n.Media.Fit == "cover" {
+			fit = ui.Cover
+		} else if n.Media.Fit == "fill" {
+			fit = ui.FillBox
+		}
+		rad := float32(n.Style.Radius) * z
+		if rad == 0 {
+			rad = 10 * z
+		}
+		box := ui.Box(c.Key("vid-box-" + n.ID)).Absolute().
+			Left(sx).Top(sy).Width(sw).Height(sh).
+			Radius(rad).Clip().Background(ui.Hex("#0F172A"))
+		box.Children(func() {
+			ui.Video(c.Key("vid-"+n.ID), vp.player).Fill().Fit(fit)
+			if a.SelectedNodes[n.ID] || a.HoveredNodeID == n.ID {
+				lbl := "Pause"
+				if !vp.player.Playing() {
+					lbl = "Play"
+				}
+				ctrl := ui.ButtonBase(c.Key("vid-toggle-" + n.ID)).Absolute().Left(8).Bottom(8).
+					Height(24).PaddingX(8).Radius(6).Background(ui.RGBA(15, 23, 42, 0.78)).
+					Children(func() {
+						ui.Text(c, lbl).FontSize(11).TextColor(ui.Hex("#F8FAFC"))
+					})
+				if ctrl.Clicked() {
+					if vp.player.Playing() {
+						vp.player.Pause()
+					} else {
+						vp.player.Play()
+					}
+				}
+			}
+		})
+	}
+}
+
 func (a *App) minimapOverlay(c *ui.Context, tk *theme.Tokens) {
 	if len(a.Page().Nodes) == 0 {
 		return
 	}
-	ui.Box(c.Key("minimap")).Absolute().Right(12).Bottom(12).
+	mm := ui.Box(c.Key("minimap")).Absolute().Right(12).Bottom(12).
 		Width(164).Height(104).Radius(8).
 		Background(tk.BgElevated.Alpha(0.92)).
-		BorderWidth(1).BorderColor(tk.BorderSecondary).
-		Draw(func(p *ui.Painter, r ui.Rect) {
-			box, ok := a.Page().Bounds()
-			if !ok {
-				return
+		BorderWidth(1).BorderColor(tk.BorderSecondary)
+	mm.HandleInput(func(ev ui.InputEvent) bool {
+		if a.CanvasRect.W <= 0 {
+			return false
+		}
+		box, ok := a.Page().Bounds()
+		if !ok {
+			return false
+		}
+		box = box.Expand(64)
+		const mw, mh = 164.0, 104.0
+		s := math.Min((mw-12)/box.W, (mh-12)/box.H)
+		ox := (mw - box.W*s) / 2
+		oy := (mh - box.H*s) / 2
+		switch ev.Kind {
+		case ui.InputPointerDown:
+			if ev.Button == 0 {
+				a.minimapDrag = true
 			}
-			box = box.Expand(32)
-			s := math.Min(float64(r.W-12)/box.W, float64(r.H-12)/box.H)
-			ox := float64(r.X) + (float64(r.W)-box.W*s)/2 - box.X*s
-			oy := float64(r.Y) + (float64(r.H)-box.H*s)/2 - box.Y*s
-			for _, n := range a.Page().Nodes {
-				nr := ui.Rect{
-					X: float32(ox + n.X*s),
-					Y: float32(oy + n.Y*s),
-					W: max(3, float32(n.W*s)),
-					H: max(2, float32(n.H*s)),
-				}
-				col := tk.TextQuaternary.Alpha(0.55)
-				if a.SelectedNodes[n.ID] {
-					col = tk.Primary
-				}
-				p.Fill(nr, col, 1)
+		case ui.InputPointerUp:
+			a.minimapDrag = false
+		}
+		if a.minimapDrag && (ev.Kind == ui.InputPointerDown || ev.Kind == ui.InputPointerMove) {
+			wx := box.X + (float64(ev.X)-ox)/s
+			wy := box.Y + (float64(ev.Y)-oy)/s
+			z := math.Max(a.Cam.Zoom, 0.05)
+			a.Cam.X = float64(a.CanvasRect.W)/(2*z) - wx
+			a.Cam.Y = float64(a.CanvasRect.H)/(2*z) - wy
+			return true
+		}
+		return false
+	})
+	mm.Draw(func(p *ui.Painter, r ui.Rect) {
+		box, ok := a.Page().Bounds()
+		if !ok {
+			return
+		}
+		box = box.Expand(32)
+		s := math.Min(float64(r.W-12)/box.W, float64(r.H-12)/box.H)
+		ox := float64(r.X) + (float64(r.W)-box.W*s)/2 - box.X*s
+		oy := float64(r.Y) + (float64(r.H)-box.H*s)/2 - box.Y*s
+		for _, n := range a.Page().Nodes {
+			nr := ui.Rect{
+				X: float32(ox + n.X*s),
+				Y: float32(oy + n.Y*s),
+				W: max(3, float32(n.W*s)),
+				H: max(2, float32(n.H*s)),
 			}
-			// Viewport box
-			if a.CanvasRect.W > 0 {
-				vx := -a.Cam.X
-				vy := -a.Cam.Y
-				vw := float64(a.CanvasRect.W) / a.Cam.Zoom
-				vh := float64(a.CanvasRect.H) / a.Cam.Zoom
-				vr := ui.Rect{
-					X: float32(ox + vx*s),
-					Y: float32(oy + vy*s),
-					W: float32(vw * s),
-					H: float32(vh * s),
-				}
-				p.Stroke(vr, tk.Primary, 2, 1.2)
+			col := tk.TextQuaternary.Alpha(0.55)
+			if a.SelectedNodes[n.ID] {
+				col = tk.Primary
 			}
-		})
+			p.Fill(nr, col, 1)
+		}
+		// Viewport box
+		if a.CanvasRect.W > 0 {
+			vx := -a.Cam.X
+			vy := -a.Cam.Y
+			vw := float64(a.CanvasRect.W) / a.Cam.Zoom
+			vh := float64(a.CanvasRect.H) / a.Cam.Zoom
+			vr := ui.Rect{
+				X: float32(ox + vx*s),
+				Y: float32(oy + vy*s),
+				W: float32(vw * s),
+				H: float32(vh * s),
+			}
+			p.Stroke(vr, tk.Primary, 2, 1.2)
+		}
+	})
 }
 
 func hitCornerHandle(n *graph.Node, r ui.Rect, cam render.Camera, sx, sy float32) int {

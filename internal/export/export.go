@@ -1,26 +1,31 @@
 // Package export renders DrawGraph documents to standalone PNG and SVG files
-// without requiring a desktop window.
+// without requiring a desktop window, including tiled high-DPI infinite-canvas export.
 package export
 
 import (
 	"bytes"
 	"fmt"
 	"html"
+	"image"
+	"image/draw"
 	"image/png"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/egoist/mygo/ui"
 
 	"github.com/neko233-com/DrawGraph/internal/geo"
 	"github.com/neko233-com/DrawGraph/internal/graph"
 	"github.com/neko233-com/DrawGraph/internal/icons"
+	"github.com/neko233-com/DrawGraph/internal/media"
 	"github.com/neko233-com/DrawGraph/internal/render"
 )
 
 // RenderPNG renders the specified page (or ActivePage when pageID == "") to PNG bytes.
+// Uses tiled ui.Render (up to 8192px) so huge infinite canvases and 4K embedded images export cleanly.
 func RenderPNG(doc *graph.Document, pageID string, reg *icons.Registry, dark bool, scale float64) ([]byte, error) {
 	if doc == nil {
 		return nil, fmt.Errorf("nil document")
@@ -42,36 +47,71 @@ func RenderPNG(doc *graph.Document, pageID string, reg *icons.Registry, dark boo
 	} else {
 		box = box.Expand(48)
 	}
-	w := max(int(math.Ceil(box.W)), 160)
-	h := max(int(math.Ceil(box.H)), 120)
+	box.W = max(box.W, 160)
+	box.H = max(box.H, 120)
 
-	const maxSide = 4096.0
-	if m := max(float64(w), float64(h)) * scale; m > maxSide {
-		scale = maxSide / max(float64(w), float64(h))
+	const maxSide = 8192.0
+	if m := max(box.W, box.H) * scale; m > maxSide {
+		scale = maxSide / max(box.W, box.H)
 	}
 
-	img := ui.Render(func(c *ui.Context) {
-		ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
-			render.PaintScene(p, r, render.SceneState{
-				Doc:    doc,
-				Page:   page,
-				Icons:  reg,
-				Cam:    render.Camera{X: -box.X, Y: -box.Y, Zoom: 1},
-				Dark:   dark,
-				Export: true,
-			})
-		})
-	}, w, h, float32(scale))
+	var mu sync.Mutex
+	mediaCache := map[string]ui.ImageSource{}
+	resolveMedia := func(assetID string) ui.ImageSource {
+		mu.Lock()
+		defer mu.Unlock()
+		if s, ok := mediaCache[assetID]; ok {
+			return s
+		}
+		asset := doc.Assets[assetID]
+		if asset == nil || asset.Kind != "image" {
+			return nil
+		}
+		src, err := media.DecodeAssetImage(asset)
+		if err != nil {
+			mediaCache[assetID] = nil
+			return nil
+		}
+		mediaCache[assetID] = src
+		return src
+	}
+
+	const tile = 1024
+	w, h := max(int(math.Ceil(box.W*scale)), 1), max(int(math.Ceil(box.H*scale)), 1)
+	out := image.NewRGBA(image.Rect(0, 0, w, h))
+	side := max(int(math.Ceil(tile/scale)), 1)
+
+	for ty := 0; ty < h; ty += tile {
+		for tx := 0; tx < w; tx += tile {
+			atX := box.X + float64(tx)/scale
+			atY := box.Y + float64(ty)/scale
+			tileImg := ui.Render(func(c *ui.Context) {
+				ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
+					render.PaintScene(p, r, render.SceneState{
+						Doc:          doc,
+						Page:         page,
+						Icons:        reg,
+						ResolveMedia: resolveMedia,
+						Cam:          render.Camera{X: -atX, Y: -atY, Zoom: 1},
+						Dark:         dark,
+						Export:       true,
+					})
+				})
+			}, side, side, float32(scale))
+			drawRect := image.Rect(tx, ty, min(tx+tile, w), min(ty+tile, h))
+			draw.Draw(out, drawRect, tileImg, image.Point{}, draw.Src)
+		}
+	}
 
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
+	if err := png.Encode(&buf, out); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
 // RenderSVG renders the specified page (or ActivePage when pageID == "") as clean standalone SVG,
-// embedding any custom or Git-installed icon SVGs directly as nested <svg> elements.
+// embedding any custom/Git-installed icon SVGs and HD image DataURLs cleanly.
 func RenderSVG(doc *graph.Document, pageID string, reg *icons.Registry, dark bool) ([]byte, error) {
 	if doc == nil {
 		return nil, fmt.Errorf("nil document")
@@ -119,7 +159,7 @@ func RenderSVG(doc *graph.Document, pageID string, reg *icons.Registry, dark boo
 	sorted := page.SortedNodes()
 	for _, n := range sorted {
 		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
-			writeSVGNode(&b, n, reg, defaultFill, defaultStroke, defaultText, dark)
+			writeSVGNode(&b, doc, n, reg, defaultFill, defaultStroke, defaultText, dark)
 		}
 	}
 	for _, e := range page.Edges {
@@ -127,7 +167,7 @@ func RenderSVG(doc *graph.Document, pageID string, reg *icons.Registry, dark boo
 	}
 	for _, n := range sorted {
 		if n.Kind != graph.KindContainer && n.Kind != graph.KindSwimlane {
-			writeSVGNode(&b, n, reg, defaultFill, defaultStroke, defaultText, dark)
+			writeSVGNode(&b, doc, n, reg, defaultFill, defaultStroke, defaultText, dark)
 		}
 	}
 
@@ -135,7 +175,7 @@ func RenderSVG(doc *graph.Document, pageID string, reg *icons.Registry, dark boo
 	return []byte(b.String()), nil
 }
 
-// ExportFile writes PNG, SVG, or draw.io XML inferred from the target path extension.
+// ExportFile writes PNG or SVG inferred from the target path extension.
 func ExportFile(outPath string, doc *graph.Document, pageID string, reg *icons.Registry, dark bool, scale float64) error {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
@@ -159,7 +199,7 @@ func ExportFile(outPath string, doc *graph.Document, pageID string, reg *icons.R
 	}
 }
 
-func writeSVGNode(b *strings.Builder, n *graph.Node, reg *icons.Registry, defFill, defStroke, defText string, dark bool) {
+func writeSVGNode(b *strings.Builder, doc *graph.Document, n *graph.Node, reg *icons.Registry, defFill, defStroke, defText string, dark bool) {
 	fill := firstStr(n.Style.Fill, defFill)
 	if dark && strings.EqualFold(fill, "#FFFFFF") {
 		fill = defFill
@@ -182,6 +222,40 @@ func writeSVGNode(b *strings.Builder, n *graph.Node, reg *icons.Registry, defFil
 
 	switch n.Kind {
 	case graph.KindText:
+	case graph.KindImage:
+		rad := n.Style.Radius
+		if rad == 0 {
+			rad = 8
+		}
+		fmt.Fprintf(b, `<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="%s" stroke="%s" stroke-width="%.2f"%s/>`+"\n",
+			n.X, n.Y, n.W, n.H, rad, esc(fill), esc(stroke), sw, dashAttr)
+		if n.Media != nil && doc != nil {
+			if a := doc.Assets[n.Media.AssetID]; a != nil && a.DataURL != "" {
+				par := "xMidYMid meet"
+				if n.Media.Fit == "cover" {
+					par = "xMidYMid slice"
+				} else if n.Media.Fit == "fill" {
+					par = "none"
+				}
+				fmt.Fprintf(b, `<image href="%s" x="%.2f" y="%.2f" width="%.2f" height="%.2f" preserveAspectRatio="%s"/>`+"\n",
+					esc(a.DataURL), n.X, n.Y, n.W, n.H, par)
+			}
+		}
+		return
+	case graph.KindVideo:
+		rad := n.Style.Radius
+		if rad == 0 {
+			rad = 10
+		}
+		fmt.Fprintf(b, `<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="#0F172A" stroke="%s" stroke-width="%.2f"%s/>`+"\n",
+			n.X, n.Y, n.W, n.H, rad, esc(stroke), sw, dashAttr)
+		cx, cy := n.X+n.W/2, n.Y+n.H/2
+		fmt.Fprintf(b, `<circle cx="%.2f" cy="%.2f" r="22" fill="#2563EB" fill-opacity="0.9"/>`+"\n", cx, cy)
+		fmt.Fprintf(b, `<polygon points="%.2f,%.2f %.2f,%.2f %.2f,%.2f" fill="#FFFFFF"/>`+"\n", cx-6, cy-9, cx+10, cy, cx-6, cy+9)
+		if strings.TrimSpace(n.Label) != "" {
+			fmt.Fprintf(b, `<text x="%.2f" y="%.2f" font-size="12" fill="#F8FAFC">%s</text>`+"\n", n.X+10, n.Y+n.H-10, esc(n.Label))
+		}
+		return
 	case graph.KindEllipse:
 		fmt.Fprintf(b, `<ellipse cx="%.2f" cy="%.2f" rx="%.2f" ry="%.2f" fill="%s" stroke="%s" stroke-width="%.2f"%s/>`+"\n",
 			n.X+n.W/2, n.Y+n.H/2, n.W/2, n.H/2, esc(fill), esc(stroke), sw, dashAttr)
