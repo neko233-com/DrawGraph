@@ -152,8 +152,8 @@ func TestWorkbenchToolbarSidebarDrawersAndShortcuts(t *testing.T) {
 	}
 
 	// 7. Open Icon Plugins drawer & Habits drawer!
-	if err := tt.Click("Icon Plugins"); err != nil {
-		t.Fatalf("click Icon Plugins: %v", err)
+	if err := tt.Click("Icons"); err != nil {
+		t.Fatalf("click Icons: %v", err)
 	}
 	tt.Frame()
 	if !a.PluginsOpen || !tt.HasText("Install from Git URL") {
@@ -162,6 +162,15 @@ func TestWorkbenchToolbarSidebarDrawersAndShortcuts(t *testing.T) {
 	tt.Key(0, ui.KeyEscape)
 	tt.Frame()
 
+	// Ensure right-aligned Habits sits inside 1360px AND >=160px slack exists between left/right groups for macOS titlebar insets.
+	if hbRect, ok := tt.Find("Habits"); !ok || hbRect.X+hbRect.W > 1356 {
+		t.Fatalf("toolbar overflowing right edge on 1360px window: %+v", hbRect)
+	}
+	if fmtRect, ok := tt.Find("Format"); ok {
+		if srchRect, ok2 := tt.Find("Search / Commands (Ctrl+K)"); ok2 && srchRect.X-(fmtRect.X+fmtRect.W) < 220 {
+			t.Fatalf("insufficient toolbar spacer slack for macOS traffic lights: gap=%v", srchRect.X-(fmtRect.X+fmtRect.W))
+		}
+	}
 	if err := tt.Click("Habits"); err != nil {
 		t.Fatalf("click Habits: %v", err)
 	}
@@ -342,7 +351,7 @@ func TestUpdateDrawerCheckAndSettingsPersistence(t *testing.T) {
 func TestWorkbenchMultiLanguageCommandPaletteMermaidAndPowerFeatures(t *testing.T) {
 	a, tt, _ := newTestWorkbench(t)
 
-	// 1. Open Mermaid Modal and import a flowchart cleanly
+	// 1. Open Mermaid Modal (via toolbar ActionIcon Title) and import a flowchart cleanly
 	if err := tt.Click("Mermaid"); err != nil {
 		t.Fatalf("click Mermaid toolbar button: %v", err)
 	}

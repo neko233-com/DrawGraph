@@ -28,17 +28,17 @@ func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
 	if bar.Height > h {
 		h = bar.Height
 	}
-	ui.Row(c).Height(h).Shrink(0).Gap(6).AlignItems(ui.Center).
-		Padding(0, bar.Right+12, 0, bar.Left+12).
+	ui.Row(c).Height(h).Shrink(0).Gap(3).AlignItems(ui.Center).
+		Padding(0, bar.Right+8, 0, bar.Left+8).
 		Background(tk.BgContainer).
 		BorderWidth(0, 0, 1, 0).BorderColor(tk.BorderSecondary).
 		DragWindow().Children(func() {
 		// Brand
-		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Size(24, 24).Radius(6).Background(tk.Primary).Center().Children(func() {
-				ui.Icon(c, lucide.Workflow()).FontSize(14).TextColor(tk.PrimaryForeground)
+		ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(22, 22).Radius(6).Background(tk.Primary).Center().Children(func() {
+				ui.Icon(c, lucide.Workflow()).FontSize(13).TextColor(tk.PrimaryForeground)
 			})
-			ui.Text(c, a.T("app.name")).FontSize(13).FontWeight(600).TextColor(tk.Text)
+			ui.Text(c, a.T("app.name")).FontSize(13).FontWeight(600).TextColor(tk.Text).SingleLine()
 		})
 
 		dividerV(c, tk)
@@ -53,10 +53,10 @@ func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
 		if action.ActionIcon(c, lucide.Save(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.save")}).Clicked() {
 			a.SaveToCurrentOrDialog(false)
 		}
-		if iconButton(c, lucide.ImagePlus(), a.T("tb.media"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+		if action.ActionIcon(c, lucide.ImagePlus(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.media")}).Clicked() {
 			a.ImportMediaFromDialog()
 		}
-		if iconButton(c, lucide.FileCode(), a.T("tb.mermaid"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+		if action.ActionIcon(c, lucide.FileCode(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.mermaid")}).Clicked() {
 			a.MermaidOpen = true
 		}
 		if action.Button(c, a.T("tb.exportSVG"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
