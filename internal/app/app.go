@@ -26,6 +26,7 @@ import (
 	"github.com/neko233-com/DrawGraph/internal/layout"
 	"github.com/neko233-com/DrawGraph/internal/media"
 	"github.com/neko233-com/DrawGraph/internal/render"
+	"github.com/neko233-com/DrawGraph/internal/update"
 )
 
 // Host abstracts window lifecycle and file persistence so App runs identically
@@ -85,9 +86,16 @@ type App struct {
 	InspectorOpen bool
 	MinimapOpen   bool
 
-	// Drawers
-	PluginsOpen bool
-	HabitsOpen  bool
+	// Drawers & Updates
+	PluginsOpen         bool
+	HabitsOpen          bool
+	UpdateOpen          bool
+	UpdateState         updateState
+	UpdateRelease       *update.Release
+	UpdateProgress      float64
+	UpdateErr           string
+	UpdatePath          string
+	UpdateQuitRequested bool
 
 	// Inline text editing
 	EditingNodeID string
@@ -230,6 +238,7 @@ func (a *App) View(c *ui.Context) {
 		a.statusBar(c, tk)
 		a.pluginsDrawer(c, tk)
 		a.habitsDrawer(c, tk)
+		a.updateDrawer(c, tk)
 		feedback.ToastHost(c, feedback.ToastHostProps{Placement: feedback.ToastBottomLeft})
 	})
 }

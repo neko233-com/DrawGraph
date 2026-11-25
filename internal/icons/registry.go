@@ -59,13 +59,17 @@ type IconPack struct {
 
 // PackManifest is the optional drawgraph-icons.json file inside an icon pack repository.
 type PackManifest struct {
-	ID          string `json:"id,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Version     string `json:"version,omitempty"`
-	Author      string `json:"author,omitempty"`
-	Description string `json:"description,omitempty"`
-	IconsDir    string `json:"iconsDir,omitempty"`
-	Icons       []struct {
+	SchemaVersion int    `json:"schemaVersion,omitempty"`
+	MinAppVersion string `json:"minAppVersion,omitempty"`
+	ID            string `json:"id,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Version       string `json:"version,omitempty"`
+	Author        string `json:"author,omitempty"`
+	License       string `json:"license,omitempty"`
+	Homepage      string `json:"homepage,omitempty"`
+	Description   string `json:"description,omitempty"`
+	IconsDir      string `json:"iconsDir,omitempty"`
+	Icons         []struct {
 		Name     string   `json:"name"`
 		Title    string   `json:"title,omitempty"`
 		Category string   `json:"category,omitempty"`

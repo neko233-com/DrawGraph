@@ -60,6 +60,41 @@ type SceneState struct {
 	MarqueeBox     *geo.Box
 }
 
+// ShapePaintContext passes resolved colors and geometry to custom registered shape plugins.
+type ShapePaintContext struct {
+	Painter     *ui.Painter
+	Box         ui.Rect
+	Node        *graph.Node
+	Fill        ui.Color
+	Stroke      ui.Color
+	StrokeWidth float32
+	Radius      float32
+	Zoom        float32
+	Dark        bool
+}
+
+// ShapeRenderer paints a custom NodeKind onto the GPU canvas.
+type ShapeRenderer func(ctx ShapePaintContext)
+
+var customShapes = map[graph.NodeKind]ShapeRenderer{}
+
+// RegisterShape registers an extensible custom node shape renderer.
+func RegisterShape(kind graph.NodeKind, fn ShapeRenderer) {
+	if kind == "" || fn == nil {
+		return
+	}
+	customShapes[kind] = fn
+}
+
+// RegisteredShapes returns all registered custom shape kinds.
+func RegisteredShapes() []graph.NodeKind {
+	out := make([]graph.NodeKind, 0, len(customShapes))
+	for k := range customShapes {
+		out = append(out, k)
+	}
+	return out
+}
+
 // Palette returns theme-aware canvas defaults.
 type Palette struct {
 	CanvasBG      ui.Color
@@ -321,8 +356,22 @@ func paintNode(p *ui.Painter, r ui.Rect, st SceneState, pal Palette, n *graph.No
 		paintVideoCard(p, box, st, pal, n, stroke, rad, swpx, z)
 		return
 	default:
-		p.Fill(box, fill, rad)
-		strokeRect(p, box, stroke, rad, swpx, n.Style.Dash)
+		if customFn, ok := customShapes[n.Kind]; ok {
+			customFn(ShapePaintContext{
+				Painter:     p,
+				Box:         box,
+				Node:        n,
+				Fill:        fill,
+				Stroke:      stroke,
+				StrokeWidth: swpx,
+				Radius:      rad,
+				Zoom:        z,
+				Dark:        st.Dark,
+			})
+		} else {
+			p.Fill(box, fill, rad)
+			strokeRect(p, box, stroke, rad, swpx, n.Style.Dash)
+		}
 	}
 
 	// Render optional SVG icon from built-in or Git-installed icon pack.

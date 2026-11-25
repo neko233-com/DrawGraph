@@ -23,6 +23,8 @@ import (
 	"github.com/neko233-com/DrawGraph/internal/ipc"
 	"github.com/neko233-com/DrawGraph/internal/layout"
 	"github.com/neko233-com/DrawGraph/internal/media"
+	"github.com/neko233-com/DrawGraph/internal/render"
+	"github.com/neko233-com/DrawGraph/internal/update"
 	"github.com/neko233-com/DrawGraph/internal/version"
 )
 
@@ -106,6 +108,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdIcon(rest, reg, stdout, stderr)
 	case "habits":
 		return cmdHabits(rest, hb, stdout, stderr)
+	case "update":
+		return cmdUpdate(rest, hb, stdout, stderr)
 	case "live":
 		return cmdLive(rest, stdout, stderr)
 	default:
@@ -123,18 +127,21 @@ func cmdSchema(args []string, reg *icons.Registry, stdout io.Writer) int {
 		presets = append(presets, pr.ID)
 	}
 	schema := map[string]any{
-		"tool":         "drawgraph",
-		"version":      version.Version,
-		"nodeKinds":    graph.AllNodeKinds,
-		"routings":     []graph.RoutingStyle{graph.RouteOrthogonal, graph.RouteStraight, graph.RouteCurved},
-		"arrows":       []graph.ArrowStyle{graph.ArrowClassic, graph.ArrowOpen, graph.ArrowDiamond, graph.ArrowCircle, graph.ArrowNone},
-		"presets":      presets,
-		"iconPacks":    packIDs,
-		"exportFormat": []string{"png", "svg", "drawio"},
+		"schemaVersion":    1,
+		"tool":             "drawgraph",
+		"version":          version.Version,
+		"nodeKinds":        graph.AllNodeKinds,
+		"customShapes":     render.RegisteredShapes(),
+		"layoutStrategies": layout.RegisteredStrategies(),
+		"exportFormats":    export.SupportedExtensions(),
+		"routings":         []graph.RoutingStyle{graph.RouteOrthogonal, graph.RouteStraight, graph.RouteCurved},
+		"arrows":           []graph.ArrowStyle{graph.ArrowClassic, graph.ArrowOpen, graph.ArrowDiamond, graph.ArrowCircle, graph.ArrowNone},
+		"presets":          presets,
+		"iconPacks":        packIDs,
 		"commands": []string{
 			"new", "inspect", "validate", "add-node", "add-image", "add-video", "update-node", "remove-node",
 			"connect", "disconnect", "page", "batch", "dsl", "format",
-			"import", "export", "icon", "habits", "live", "schema", "skill",
+			"import", "export", "icon", "habits", "update", "live", "schema", "skill",
 		},
 	}
 	return emitResult(stdout, true, "schema", schema, "")
@@ -1322,6 +1329,144 @@ func cmdLive(args []string, stdout, stderr io.Writer) int {
 	return emitErr(stdout, stderr, hasJSONFlag(args), "live", fmt.Errorf("usage: drawgraph live status [--json]"), 2)
 }
 
+func cmdUpdate(args []string, hb *habits.Store, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		return emitErr(stdout, stderr, false, "update", fmt.Errorf("usage: drawgraph update <check|download|apply|config>"), 2)
+	}
+	sub := args[0]
+	rest := args[1:]
+	switch sub {
+	case "check":
+		fs := flag.NewFlagSet("update check", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		channel := fs.String("channel", hb.Snapshot().UpdateChannel, "stable | prerelease")
+		current := fs.String("current", version.Version, "override current version for testing")
+		jsonOut := fs.Bool("json", false, "output JSON")
+		if err := fs.Parse(reorderFlags(rest)); err != nil {
+			return 2
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rel, err := update.Check(ctx, update.CheckOptions{
+			Current: *current,
+			Channel: *channel,
+		})
+		if err != nil {
+			return emitErr(stdout, stderr, *jsonOut, "update.check", err, 1)
+		}
+		if rel == nil {
+			return emitResult(stdout, *jsonOut, "update.check", map[string]any{
+				"upToDate": true,
+				"current":  *current,
+				"channel":  *channel,
+			}, fmt.Sprintf("DrawGraph %s is up to date (%s)\n", *current, *channel))
+		}
+		return emitResult(stdout, *jsonOut, "update.check", map[string]any{
+			"upToDate": false,
+			"current":  *current,
+			"release":  rel,
+		}, fmt.Sprintf("Update available: v%s (%s)\n", rel.Version, rel.AssetName))
+	case "download":
+		fs := flag.NewFlagSet("update download", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		channel := fs.String("channel", hb.Snapshot().UpdateChannel, "stable | prerelease")
+		dir := fs.String("dir", update.DefaultCacheDir(), "download directory")
+		current := fs.String("current", version.Version, "override current version")
+		jsonOut := fs.Bool("json", false, "output JSON")
+		if err := fs.Parse(reorderFlags(rest)); err != nil {
+			return 2
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		rel, err := update.Check(ctx, update.CheckOptions{Current: *current, Channel: *channel})
+		if err != nil {
+			return emitErr(stdout, stderr, *jsonOut, "update.download", err, 1)
+		}
+		if rel == nil {
+			return emitResult(stdout, *jsonOut, "update.download", map[string]any{"upToDate": true}, "Already up to date\n")
+		}
+		path, err := update.Download(ctx, rel, *dir, nil)
+		if err != nil {
+			return emitErr(stdout, stderr, *jsonOut, "update.download", err, 1)
+		}
+		return emitResult(stdout, *jsonOut, "update.download", map[string]any{
+			"version": rel.Version, "path": path,
+		}, fmt.Sprintf("Downloaded & verified %s\n", path))
+	case "apply":
+		fs := flag.NewFlagSet("update apply", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		channel := fs.String("channel", hb.Snapshot().UpdateChannel, "stable | prerelease")
+		silent := fs.Bool("silent", false, "run installer silently without progress UI")
+		noRelaunch := fs.Bool("no-relaunch", false, "do not relaunch GUI after updating")
+		current := fs.String("current", version.Version, "override current version")
+		jsonOut := fs.Bool("json", false, "output JSON")
+		if err := fs.Parse(reorderFlags(rest)); err != nil {
+			return 2
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		rel, err := update.Check(ctx, update.CheckOptions{Current: *current, Channel: *channel})
+		if err != nil {
+			return emitErr(stdout, stderr, *jsonOut, "update.apply", err, 1)
+		}
+		if rel == nil {
+			return emitResult(stdout, *jsonOut, "update.apply", map[string]any{"upToDate": true}, "Already up to date\n")
+		}
+		path, err := update.Download(ctx, rel, update.DefaultCacheDir(), nil)
+		if err != nil {
+			return emitErr(stdout, stderr, *jsonOut, "update.apply", err, 1)
+		}
+		if err := update.Apply(path, update.ApplyOptions{Silent: *silent, Relaunch: !*noRelaunch}); err != nil {
+			return emitErr(stdout, stderr, *jsonOut, "update.apply", err, 1)
+		}
+		return emitResult(stdout, *jsonOut, "update.apply", map[string]any{
+			"started": true, "version": rel.Version, "path": path,
+		}, fmt.Sprintf("Applying update v%s from %s\n", rel.Version, path))
+	case "config":
+		fs := flag.NewFlagSet("update config", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		autoCheck := fs.String("auto-check", "", "true | false")
+		autoDownload := fs.String("auto-download", "", "true | false")
+		channel := fs.String("channel", "", "stable | prerelease")
+		hours := fs.Int("interval-hours", 0, "check interval in hours")
+		jsonOut := fs.Bool("json", false, "output JSON")
+		if err := fs.Parse(reorderFlags(rest)); err != nil {
+			return 2
+		}
+		err := hb.Update(func(p *habits.Profile) {
+			if *autoCheck == "true" {
+				p.AutoCheckUpdates = true
+			} else if *autoCheck == "false" {
+				p.AutoCheckUpdates = false
+			}
+			if *autoDownload == "true" {
+				p.AutoDownloadUpdates = true
+			} else if *autoDownload == "false" {
+				p.AutoDownloadUpdates = false
+			}
+			if *channel == "stable" || *channel == "prerelease" {
+				p.UpdateChannel = *channel
+			}
+			if *hours > 0 {
+				p.UpdateCheckHours = *hours
+			}
+		})
+		if err != nil {
+			return emitErr(stdout, stderr, *jsonOut, "update.config", err, 1)
+		}
+		prof := hb.Snapshot()
+		return emitResult(stdout, *jsonOut, "update.config", map[string]any{
+			"autoCheckUpdates":    prof.AutoCheckUpdates,
+			"autoDownloadUpdates": prof.AutoDownloadUpdates,
+			"updateChannel":       prof.UpdateChannel,
+			"updateCheckHours":    prof.UpdateCheckHours,
+		}, fmt.Sprintf("Update config: autoCheck=%v autoDownload=%v channel=%s every=%dh\n",
+			prof.AutoCheckUpdates, prof.AutoDownloadUpdates, prof.UpdateChannel, prof.UpdateCheckHours))
+	default:
+		return emitErr(stdout, stderr, hasJSONFlag(rest), "update", fmt.Errorf("unknown update subcommand %q", sub), 2)
+	}
+}
+
 func loadAnyDoc(path string) (*graph.Document, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".drawio" || ext == ".xml" {
@@ -1454,7 +1599,7 @@ func reorderFlags(args []string) []string {
 
 func isBoolFlagName(name string) bool {
 	switch name {
-	case "json", "live", "dark", "remember", "format", "stdin", "dry-run", "no-style", "all", "native", "show-bar", "loop", "muted":
+	case "json", "live", "dark", "remember", "format", "stdin", "dry-run", "no-style", "all", "native", "show-bar", "loop", "muted", "silent", "no-relaunch":
 		return true
 	}
 	return false
@@ -1523,6 +1668,12 @@ Habit Memory Commands (Persisted Across Projects):
   habits set [flags]                        Persist default preset, direction, routing, colors, gaps
   habits presets                            List curated style presets
   habits export/import/reset                Manage portable habit profiles
+
+Self-Update Commands (Manual & Automatic):
+  update check [--channel stable|prerelease] Check GitHub Releases for newer MSI/DMG
+  update download                            Download & SHA-256 verify latest installer
+  update apply                               Download, verify & install latest release
+  update config [flags]                      Configure auto-check, auto-download, channel
 
 Agent Integration:
   schema                                    Print JSON capability schema for AI agents

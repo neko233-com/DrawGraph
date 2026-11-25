@@ -85,6 +85,8 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          name: DrawGraph ${{ github.ref_name }}
+          generate_release_notes: true
           files: |
             artifacts/DrawGraph-windows-amd64.msi
             artifacts/DrawGraph-windows-amd64.msi.sha256

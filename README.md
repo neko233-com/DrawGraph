@@ -10,6 +10,29 @@
 - **Git-Extensible SVG Icon Plugins**: Extend DrawGraph's icon library from any Git repository URL or local SVG directory (`drawgraph icon install <git-url>`), with optional `drawgraph-icons.json` manifest or automatic SVG discovery.
 - **One-Click Elegant Formatting & Persistent Habits**: Layered Sugiyama-style DAG layout (`LR`/`TB`), crossing minimization, smart orthogonal/curved edge routing, container wrapping, palette harmonization, and cross-project user habit memory (`habits.json`) so preferences never reset between projects.
 
+## Installation & Updates
+
+### One-Line Install
+
+- **Windows x64 (`windows/amd64` MSI)**:
+  ```powershell
+  irm https://raw.githubusercontent.com/neko233-com/DrawGraph/main/install.ps1 | iex
+  ```
+- **macOS Apple Silicon (`darwin/arm64` DMG) & Windows Git Bash**:
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/neko233-com/DrawGraph/main/install.sh | sh
+  ```
+
+### Manual & Automatic Updates
+
+- **GUI**: Open **Help → Check for Updates…** (or click the version badge on the status bar) to check, download, SHA-256 verify, and install updates, or enable automatic startup checks & background downloads.
+- **CLI**:
+  ```sh
+  drawgraph update check --json
+  drawgraph update apply --silent
+  drawgraph update config --auto-check true --auto-download true --channel stable
+  ```
+
 ## Quick Start
 
 ### Run Desktop GUI
@@ -75,15 +98,21 @@ CGO_ENABLED=0 go test -count=1 ./...
 
 The suite covers geometry & orthogonal routing (`internal/geo`), graph model & undo history (`internal/graph`), `.drawio` XML import/export including compressed diagrams (`internal/drawio`), Git icon plugin install/sync (`internal/icons`), persistent cross-project habit learning (`internal/habits`), layered layout & one-click formatting (`internal/layout`), headless GPU PNG & SVG export (`internal/export`), Agent CLI + live IPC (`internal/agentcli`, `internal/ipc`), and headless GPU UI interaction testing via `ui.NewTester` (`internal/app`).
 
-## Packaging
+## Packaging & Releases
 
-- **Windows x64 MSI** (requires Go 1.27+ and WiX 5 `wix.exe`):
+See [RELEASE.md](RELEASE.md) and [AGENTS.md](AGENTS.md) for the full build, local always-latest installation, and GitHub Release pipeline:
+
+- **Windows x64 MSI (Build + Install Locally)**:
   ```powershell
-  powershell -ExecutionPolicy Bypass -File scripts\build-msi.ps1 -Version 0.1.0
+  powershell -ExecutionPolicy Bypass -File scripts\install-local.ps1 -Version 0.1.0
   ```
 - **macOS arm64 DMG** (run on macOS Apple Silicon):
   ```sh
   ./scripts/build-dmg.sh 0.1.0
+  ```
+- **Full Release (`vX.Y.Z` tag + CI双端发布)**:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 0.1.0
   ```
 
 ## License

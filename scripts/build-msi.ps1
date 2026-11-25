@@ -2,7 +2,8 @@
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\build-msi.ps1 -Version 0.1.0
 param(
     [string]$Version = "",
-    [string]$OutDir = "dist"
+    [string]$OutDir = "dist",
+    [string]$Channel = "stable"
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,12 +44,16 @@ New-Item -ItemType Directory -Force $payload, $obj, $OutDir | Out-Null
 $commit = "unknown"
 try { $commit = ((git rev-parse --short HEAD) 2>$null).Trim() } catch {}
 $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
-$ldflags = "-s -w -buildid= -X github.com/neko233-com/DrawGraph/internal/version.Version=$Version -X github.com/neko233-com/DrawGraph/internal/version.Commit=$commit -X github.com/neko233-com/DrawGraph/internal/version.Date=$date"
+$ldflags = "-s -w -buildid= -X github.com/neko233-com/DrawGraph/internal/version.Version=$Version -X github.com/neko233-com/DrawGraph/internal/version.Commit=$commit -X github.com/neko233-com/DrawGraph/internal/version.Date=$date -X github.com/neko233-com/DrawGraph/internal/version.Channel=$Channel"
 $guiLdflags = "$ldflags -H=windowsgui"
 
 $env:CGO_ENABLED = "0"
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
+
+Write-Host "Embedding Windows resource (.syso) for $Version..."
+& go run ./scripts/gen-winres -version $Version -ico assets/drawgraph.ico -out cmd/drawgraph-gui/rsrc_windows_amd64.syso
+if ($LASTEXITCODE -ne 0) { throw "gen-winres failed" }
 
 Write-Host "Building drawgraph.exe (Agent CLI)..."
 & go build -trimpath -buildvcs=false -ldflags $ldflags -o (Join-Path $payload "drawgraph.exe") ./cmd/drawgraph

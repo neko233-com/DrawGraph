@@ -81,6 +81,7 @@ func main() {
 			Content:   ui.View(a.View),
 		})
 		host.win = win
+		a.StartUpdateSchedule()
 	})
 
 	if err := mygo.App.Run(); err != nil {
@@ -132,6 +133,10 @@ func buildMenu(a *app.App) *mygo.Menu {
 			{Label: "Toggle Inspector", Click: act(func() { a.InspectorOpen = !a.InspectorOpen })},
 			{Label: "Toggle Minimap", Click: act(func() { a.MinimapOpen = !a.MinimapOpen })},
 			{Role: mygo.RoleToggleFullScreen},
+		}},
+		{Label: "Help", Submenu: []*mygo.MenuItem{
+			{Label: "Check for Updates…", Click: act(func() { a.UpdateOpen = true; a.CheckUpdates(true) })},
+			{Label: "Software Update Settings…", Click: act(func() { a.UpdateOpen = true })},
 		}},
 		{Role: mygo.RoleWindowMenu},
 	})

@@ -2,9 +2,14 @@ package agentcli_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,8 +17,13 @@ import (
 	"testing"
 
 	"github.com/neko233-com/DrawGraph/internal/agentcli"
+	"github.com/neko233-com/DrawGraph/internal/export"
 	"github.com/neko233-com/DrawGraph/internal/graph"
+	"github.com/neko233-com/DrawGraph/internal/icons"
 	"github.com/neko233-com/DrawGraph/internal/ipc"
+	"github.com/neko233-com/DrawGraph/internal/layout"
+	"github.com/neko233-com/DrawGraph/internal/render"
+	"github.com/neko233-com/DrawGraph/internal/update"
 )
 
 func runCLI(t *testing.T, home string, stdin string, args ...string) (int, string, string) {
@@ -237,5 +247,69 @@ func TestCLIMediaCommandsAndDSLMedia(t *testing.T) {
 	}
 	if clip == nil || clip.Kind != graph.KindVideo {
 		t.Fatalf("clip video node missing: %+v", clip)
+	}
+}
+
+func TestCLIUpdateAndExtensionRegistries(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+
+	// Register extensible shape, layout strategy, and export driver.
+	render.RegisterShape("custom-badge", func(ctx render.ShapePaintContext) {
+		ctx.Painter.Fill(ctx.Box, ctx.Fill, ctx.Radius)
+	})
+	layout.RegisterStrategy("custom-grid", func(_ *graph.Document, p *graph.Page, _ layout.Options) layout.Report {
+		return layout.Report{Direction: "GRID", Layers: len(p.Nodes)}
+	})
+	export.RegisterDriver(".txt", func(doc *graph.Document, _ string, _ *icons.Registry, _ bool, _ float64) ([]byte, error) {
+		return []byte(doc.Title), nil
+	})
+	code, out, errStr := runCLI(t, home, "", "schema", "--json")
+	if code != 0 || !strings.Contains(out, "custom-badge") || !strings.Contains(out, "custom-grid") || !strings.Contains(out, ".txt") {
+		t.Fatalf("schema missing registered extensions (%d): %s %s", code, out, errStr)
+	}
+
+	// Update config persistence
+	code, out, errStr = runCLI(t, home, "", "update", "config", "--auto-check", "true", "--auto-download", "true", "--channel", "prerelease", "--interval-hours", "12", "--json")
+	if code != 0 || !strings.Contains(out, `"autoDownloadUpdates": true`) || !strings.Contains(out, `"updateChannel": "prerelease"`) {
+		t.Fatalf("update config failed (%d): %s %s", code, out, errStr)
+	}
+
+	// Mock GitHub release server for CLI update check & download
+	payload := []byte("msi-bytes-for-cli")
+	sum := sha256.Sum256(payload)
+	var srvURL string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/neko233-com/DrawGraph/releases/latest":
+			fmt.Fprintf(w, `{"tag_name":"v9.9.9","assets":[
+				{"name":"DrawGraph-windows-amd64.msi","browser_download_url":"%s/a.msi"},
+				{"name":"DrawGraph-windows-amd64.msi.sha256","browser_download_url":"%s/a.sha"},
+				{"name":"DrawGraph-darwin-arm64.dmg","browser_download_url":"%s/a.dmg"},
+				{"name":"DrawGraph-darwin-arm64.dmg.sha256","browser_download_url":"%s/a.sha"}
+			]}`, srvURL, srvURL, srvURL, srvURL)
+		case "/a.msi", "/a.dmg":
+			_, _ = w.Write(payload)
+		case "/a.sha":
+			fmt.Fprintf(w, "%s  asset\n", hex.EncodeToString(sum[:]))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	srvURL = ts.URL
+
+	oldBase := update.APIBase
+	update.APIBase = ts.URL
+	defer func() { update.APIBase = oldBase }()
+
+	code, out, errStr = runCLI(t, home, "", "update", "check", "--channel", "stable", "--current", "0.1.0", "--json")
+	if code != 0 || !strings.Contains(out, `"version": "9.9.9"`) {
+		t.Fatalf("update check failed (%d): %s %s", code, out, errStr)
+	}
+	dlDir := filepath.Join(tmp, "dl")
+	code, out, errStr = runCLI(t, home, "", "update", "download", "--channel", "stable", "--current", "0.1.0", "--dir", dlDir, "--json")
+	if code != 0 || !strings.Contains(out, "9.9.9") {
+		t.Fatalf("update download failed (%d): %s %s", code, out, errStr)
 	}
 }

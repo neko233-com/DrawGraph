@@ -24,6 +24,32 @@ import (
 	"github.com/neko233-com/DrawGraph/internal/render"
 )
 
+// Driver renders a document page to a custom export byte format (extensible for PDF, Mermaid, etc.).
+type Driver func(doc *graph.Document, pageID string, reg *icons.Registry, dark bool, scale float64) ([]byte, error)
+
+var customDrivers = map[string]Driver{}
+
+// RegisterDriver registers an extensible export format by lowercase file extension (e.g. ".mermaid").
+func RegisterDriver(ext string, fn Driver) {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext == "" || fn == nil {
+		return
+	}
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	customDrivers[ext] = fn
+}
+
+// SupportedExtensions returns built-in and registered custom export extensions.
+func SupportedExtensions() []string {
+	out := []string{".png", ".svg"}
+	for ext := range customDrivers {
+		out = append(out, ext)
+	}
+	return out
+}
+
 // RenderPNG renders the specified page (or ActivePage when pageID == "") to PNG bytes.
 // Uses tiled ui.Render (up to 8192px) so huge infinite canvases and 4K embedded images export cleanly.
 func RenderPNG(doc *graph.Document, pageID string, reg *icons.Registry, dark bool, scale float64) ([]byte, error) {
@@ -195,7 +221,14 @@ func ExportFile(outPath string, doc *graph.Document, pageID string, reg *icons.R
 		}
 		return os.WriteFile(outPath, data, 0o644)
 	default:
-		return fmt.Errorf("unsupported export extension %q (expected .png or .svg)", ext)
+		if drv, ok := customDrivers[ext]; ok {
+			data, err := drv(doc, pageID, reg, dark, scale)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(outPath, data, 0o644)
+		}
+		return fmt.Errorf("unsupported export extension %q (expected .png, .svg, or registered driver)", ext)
 	}
 }
 

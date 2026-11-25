@@ -774,6 +774,9 @@ func LoadFile(path string) (*Document, error) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if err := MigrateUp(&doc); err != nil {
+		return nil, err
+	}
 	doc.Normalize()
 	return &doc, nil
 }

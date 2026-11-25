@@ -18,7 +18,6 @@ import (
 
 	"github.com/neko233-com/DrawGraph/internal/graph"
 	"github.com/neko233-com/DrawGraph/internal/habits"
-	"github.com/neko233-com/DrawGraph/internal/version"
 )
 
 func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
@@ -679,9 +678,13 @@ func (a *App) statusBar(c *ui.Context, tk *theme.Tokens) {
 		}
 		ui.Spacer(c)
 		if a.FilePath != "" {
-			ui.Text(c, a.FilePath).FontSize(11).TextColor(tk.TextQuaternary).SingleLine().MaxWidth(340)
-		} else {
-			ui.Text(c, "DrawGraph "+version.Version).FontSize(11).TextColor(tk.TextQuaternary)
+			ui.Text(c, a.FilePath).FontSize(11).TextColor(tk.TextQuaternary).SingleLine().MaxWidth(300)
+		}
+		if action.Button(c, a.statusUpdateLabel(), action.ButtonProps{
+			Variant: action.Text,
+			Size:    theme.Small,
+		}).Clicked() {
+			a.UpdateOpen = true
 		}
 	})
 }

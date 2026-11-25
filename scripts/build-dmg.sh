@@ -25,6 +25,10 @@ echo "Building DrawGraph.app with MyGo (darwin/arm64)..."
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c 'import json,sys; p="mygo.json"; d=json.load(open(p)); d["version"]=sys.argv[1]; json.dump(d,open(p,"w"),indent=2); print()' "$VERSION"
+fi
+
 go tool mygo build -platform darwin/arm64 -skip-notarize -skip-dmg -o "$STAGE" .
 
 APP_BUNDLE="$STAGE/darwin-arm64/DrawGraph.app"

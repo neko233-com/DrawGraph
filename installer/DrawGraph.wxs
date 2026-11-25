@@ -11,6 +11,7 @@
     <Icon Id="DrawGraph.ico" SourceFile="$(var.IconFile)" />
     <Property Id="ARPPRODUCTICON" Value="DrawGraph.ico" />
     <Property Id="ARPHELPLINK" Value="https://github.com/neko233-com/DrawGraph" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/neko233-com/DrawGraph" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="DrawGraph" />
@@ -18,15 +19,25 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="ApplicationProgramsFolder" Name="DrawGraph" />
     </StandardDirectory>
+    <StandardDirectory Id="System64Folder" />
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
       <Component Id="DrawGraphGUI" Guid="{14C92B8E-3A1C-44A6-806F-62E8A29C8E41}">
         <File Id="DrawGraphGuiExe" Name="drawgraph-gui.exe" Source="$(var.PayloadDir)\drawgraph-gui.exe" KeyPath="yes" />
-        <ProgId Id="DrawGraph.Document" Description="DrawGraph Diagram">
+        <ProgId Id="DrawGraph.Document" Description="DrawGraph Diagram" Icon="DrawGraphGuiExe">
           <Extension Id="drawgraph" ContentType="application/vnd.drawgraph+json">
             <Verb Id="open" Command="Open" TargetFile="DrawGraphGuiExe" Argument="&quot;%1&quot;" />
           </Extension>
         </ProgId>
+        <ProgId Id="DrawGraph.Drawio" Description="draw.io Diagram (DrawGraph)" Icon="DrawGraphGuiExe">
+          <Extension Id="drawio" ContentType="application/vnd.jgraph.mxfile">
+            <Verb Id="openDrawio" Command="Open with DrawGraph" TargetFile="DrawGraphGuiExe" Argument="&quot;%1&quot;" />
+          </Extension>
+        </ProgId>
+        <RegistryKey Root="HKLM" Key="Software\neko233-com\DrawGraph">
+          <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
+          <RegistryValue Name="Version" Type="string" Value="$(var.Version)" />
+        </RegistryKey>
       </Component>
 
       <Component Id="DrawGraphCLI" Guid="{52F1A7B3-94E2-4D95-B471-8A4C95F11B1D}">
@@ -62,6 +73,16 @@
                        KeyPath="yes" />
       </Component>
     </ComponentGroup>
+
+    <CustomAction Id="ClearShortcutNotContentIndexed"
+                  Directory="System64Folder"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
+                  ExeCommand='cmd.exe /c attrib -I +A "%ProgramData%\Microsoft\Windows\Start Menu\Programs\DrawGraph" &amp; attrib -I +A "%ProgramData%\Microsoft\Windows\Start Menu\Programs\DrawGraph\DrawGraph.lnk"' />
+    <InstallExecuteSequence>
+      <Custom Action="ClearShortcutNotContentIndexed" After="CreateShortcuts" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
 
     <Feature Id="MainFeature" Title="DrawGraph" Level="1">
       <ComponentGroupRef Id="ProductComponents" />

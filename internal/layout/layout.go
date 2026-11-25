@@ -29,6 +29,33 @@ type Options struct {
 	ClearWaypoints   bool               `json:"clearWaypoints"`
 	StartX           float64            `json:"startX"`
 	StartY           float64            `json:"startY"`
+	Strategy         string             `json:"strategy,omitempty"` // "layered" (default) or custom registered strategy
+}
+
+// Strategy implements a pluggable diagram formatting/layout algorithm.
+type Strategy func(doc *graph.Document, page *graph.Page, opts Options) Report
+
+var customStrategies = map[string]Strategy{}
+
+// RegisterStrategy registers an extensible layout strategy by name (e.g. "grid", "radial").
+func RegisterStrategy(name string, fn Strategy) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || fn == nil {
+		return
+	}
+	customStrategies[name] = fn
+}
+
+// RegisteredStrategies returns built-in and registered layout strategy names.
+func RegisteredStrategies() []string {
+	out := []string{"layered"}
+	for k := range customStrategies {
+		if k != "layered" {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // OptionsFromHabits seeds formatting options from the user's persisted Profile.
@@ -66,10 +93,15 @@ type Report struct {
 
 // FormatPage performs one-click elegant layout, edge routing, container wrapping, and styling.
 func FormatPage(doc *graph.Document, page *graph.Page, opts Options) Report {
-	var rep Report
 	if page == nil {
-		return rep
+		return Report{}
 	}
+	if strat := strings.ToLower(strings.TrimSpace(opts.Strategy)); strat != "" && strat != "layered" {
+		if fn, ok := customStrategies[strat]; ok {
+			return fn(doc, page, opts)
+		}
+	}
+	var rep Report
 	if opts.Direction != "LR" && opts.Direction != "TB" {
 		opts.Direction = "LR"
 	}

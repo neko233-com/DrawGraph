@@ -155,47 +155,60 @@ type Profile struct {
 	RecentFiles      []string       `json:"recentFiles,omitempty"`
 	LastExportFormat string         `json:"lastExportFormat"`
 	LastExportScale  float64        `json:"lastExportScale"`
-	UpdatedAt        time.Time      `json:"updatedAt"`
+
+	// Update Habits (Manual + Automatic Updates)
+	AutoCheckUpdates    bool   `json:"autoCheckUpdates"`
+	AutoDownloadUpdates bool   `json:"autoDownloadUpdates"`
+	UpdateChannel       string `json:"updateChannel"`    // "stable" or "prerelease"
+	UpdateCheckHours    int    `json:"updateCheckHours"` // default 24
+	LastUpdateCheck     int64  `json:"lastUpdateCheck,omitempty"`
+	SkippedVersion      string `json:"skippedVersion,omitempty"`
+
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // DefaultProfile returns sensible starter habits.
 func DefaultProfile() *Profile {
 	return &Profile{
-		Version:            1,
-		AutoRemember:       true,
-		ThemeMode:          "auto",
-		StylePreset:        "lobe-clean",
-		DefaultNodeKind:    graph.KindRounded,
-		DefaultFill:        "#FFFFFF",
-		DefaultStroke:      "#CBD5E1",
-		DefaultStrokeWidth: 1.5,
-		DefaultRadius:      10,
-		DefaultFontSize:    13,
-		DefaultTextColor:   "#0F172A",
-		DefaultShadow:      true,
-		DefaultRouting:     graph.RouteOrthogonal,
-		DefaultArrow:       graph.ArrowClassic,
-		DefaultEdgeWidth:   1.75,
-		PreferredDirection: "LR",
-		GapX:               76,
-		GapY:               56,
-		GridSize:           20,
-		SnapToGrid:         true,
-		ShowGrid:           true,
-		NormalizeSizes:     true,
-		HarmonizePalette:   true,
-		ContainerPadding:   36,
-		DefaultMediaMax:    480,
-		SidebarOpen:        true,
-		InspectorOpen:      true,
-		MinimapOpen:        true,
-		PinnedIconPacks:    []string{"builtin"},
-		FavoriteIcons:      []string{"builtin/gateway", "builtin/server", "builtin/database", "builtin/cache", "builtin/queue", "builtin/bot"},
-		IconUsage:          map[string]int{},
-		ShapeUsage:         map[string]int{},
-		LastExportFormat:   "svg",
-		LastExportScale:    2,
-		UpdatedAt:          time.Now().UTC(),
+		Version:             1,
+		AutoRemember:        true,
+		ThemeMode:           "auto",
+		StylePreset:         "lobe-clean",
+		DefaultNodeKind:     graph.KindRounded,
+		DefaultFill:         "#FFFFFF",
+		DefaultStroke:       "#CBD5E1",
+		DefaultStrokeWidth:  1.5,
+		DefaultRadius:       10,
+		DefaultFontSize:     13,
+		DefaultTextColor:    "#0F172A",
+		DefaultShadow:       true,
+		DefaultRouting:      graph.RouteOrthogonal,
+		DefaultArrow:        graph.ArrowClassic,
+		DefaultEdgeWidth:    1.75,
+		PreferredDirection:  "LR",
+		GapX:                76,
+		GapY:                56,
+		GridSize:            20,
+		SnapToGrid:          true,
+		ShowGrid:            true,
+		NormalizeSizes:      true,
+		HarmonizePalette:    true,
+		ContainerPadding:    36,
+		DefaultMediaMax:     480,
+		SidebarOpen:         true,
+		InspectorOpen:       true,
+		MinimapOpen:         true,
+		PinnedIconPacks:     []string{"builtin"},
+		FavoriteIcons:       []string{"builtin/gateway", "builtin/server", "builtin/database", "builtin/cache", "builtin/queue", "builtin/bot"},
+		IconUsage:           map[string]int{},
+		ShapeUsage:          map[string]int{},
+		LastExportFormat:    "svg",
+		LastExportScale:     2,
+		AutoCheckUpdates:    true,
+		AutoDownloadUpdates: false,
+		UpdateChannel:       "stable",
+		UpdateCheckHours:    24,
+		UpdatedAt:           time.Now().UTC(),
 	}
 }
 
@@ -597,5 +610,11 @@ func mergeMissingDefaults(p *Profile) {
 	}
 	if p.LastExportScale <= 0 {
 		p.LastExportScale = def.LastExportScale
+	}
+	if p.UpdateChannel != "stable" && p.UpdateChannel != "prerelease" {
+		p.UpdateChannel = def.UpdateChannel
+	}
+	if p.UpdateCheckHours <= 0 {
+		p.UpdateCheckHours = def.UpdateCheckHours
 	}
 }

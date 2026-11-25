@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -312,5 +313,27 @@ func TestInfiniteCanvasDropImagesVideosAndNativeResize(t *testing.T) {
 	frame := tt.Image()
 	if frame == nil || frame.Bounds().Dx() < 800 {
 		t.Fatalf("unexpected rendered UI image: %v", frame)
+	}
+}
+
+func TestUpdateDrawerCheckAndSettingsPersistence(t *testing.T) {
+	a, tt, _ := newTestWorkbench(t)
+
+	// Open Software Updates drawer by clicking the version badge in the status bar.
+	if err := tt.Click("v0.1.0-dev"); err != nil {
+		t.Fatalf("click version badge: %v", err)
+	}
+	tt.Advance(400 * time.Millisecond)
+	if !a.UpdateOpen || !tt.HasText("Automatic & Manual Update Settings") {
+		t.Fatalf("expected UpdateDrawer to open")
+	}
+
+	// Toggle auto-download checkbox and verify persistence in habits.
+	if err := tt.Click("Automatically download verified installers in background"); err != nil {
+		t.Fatalf("toggle auto-download: %v", err)
+	}
+	tt.Frame()
+	if !a.Habits.Snapshot().AutoDownloadUpdates {
+		t.Fatalf("expected AutoDownloadUpdates persisted in habits")
 	}
 }
