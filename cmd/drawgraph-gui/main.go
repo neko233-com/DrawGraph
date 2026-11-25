@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -112,12 +113,44 @@ func buildMenu(a *app.App) *mygo.Menu {
 			}
 		}
 	}
-	return mygo.NewMenu([]*mygo.MenuItem{
+	var editItem *mygo.MenuItem
+	if runtime.GOOS == "darwin" {
+		editItem = &mygo.MenuItem{Role: mygo.RoleEditMenu}
+	} else {
+		editItem = &mygo.MenuItem{Label: a.T("menu.edit"), Submenu: []*mygo.MenuItem{
+			{Label: a.T("menu.edit.undo"), Accelerator: "Ctrl+Z", Click: act(func() { a.Undo() })},
+			{Label: a.T("menu.edit.redo"), Accelerator: "Ctrl+Shift+Z", Click: act(func() { a.Redo() })},
+			mygo.Separator(),
+			{Label: a.T("menu.edit.copy"), Accelerator: "Ctrl+C", Click: act(func() { a.CopySelection() })},
+			{Label: a.T("menu.edit.cut"), Accelerator: "Ctrl+X", Click: act(func() { a.CutSelection() })},
+			{Label: a.T("menu.edit.paste"), Accelerator: "Ctrl+V", Click: act(func() { a.PasteClipboard() })},
+			{Label: a.T("menu.edit.duplicate"), Accelerator: "Ctrl+D", Click: act(func() { a.DuplicateSelection() })},
+			mygo.Separator(),
+			{Label: a.T("menu.edit.group"), Accelerator: "Ctrl+G", Click: act(func() { a.GroupSelection() })},
+			{Label: a.T("menu.edit.selectAll"), Accelerator: "Ctrl+A", Click: act(func() { a.SelectAll() })},
+			{Label: a.T("menu.edit.delete"), Accelerator: "Delete", Click: act(func() { a.DeleteSelection() })},
+		}}
+	}
+
+	var tailItems []*mygo.MenuItem
+	helpItem := &mygo.MenuItem{Label: a.T("menu.help"), Submenu: []*mygo.MenuItem{
+		{Label: a.T("menu.help.shortcuts"), Accelerator: "CmdOrCtrl+/", Click: act(func() { a.ShortcutsOpen = true })},
+		mygo.Separator(),
+		{Label: a.T("menu.help.checkUpdates"), Click: act(func() { a.UpdateOpen = true; a.CheckUpdates(true) })},
+		{Label: a.T("menu.help.updateSettings"), Click: act(func() { a.UpdateOpen = true })},
+	}}
+	if runtime.GOOS == "darwin" {
+		tailItems = []*mygo.MenuItem{helpItem, {Role: mygo.RoleWindowMenu}}
+	} else {
+		tailItems = []*mygo.MenuItem{helpItem}
+	}
+
+	items := []*mygo.MenuItem{
 		{Role: mygo.RoleAppMenu},
 		{Label: a.T("menu.file"), Submenu: []*mygo.MenuItem{
 			{Label: a.T("menu.file.new"), Accelerator: "CmdOrCtrl+N", Click: act(func() { a.NewBlankDocument() })},
 			{Label: a.T("menu.file.open"), Accelerator: "CmdOrCtrl+O", Click: act(func() { a.OpenFromDialog() })},
-			{Label: a.T("menu.file.importMermaid"), Click: act(func() { a.MermaidOpen = true })},
+			{Label: a.T("menu.file.importMermaid"), Accelerator: "CmdOrCtrl+Shift+M", Click: act(func() { a.MermaidOpen = true })},
 			mygo.Separator(),
 			{Label: a.T("menu.file.save"), Accelerator: "CmdOrCtrl+S", Click: act(func() { a.SaveToCurrentOrDialog(false) })},
 			{Label: a.T("menu.file.saveAs"), Accelerator: "CmdOrCtrl+Shift+S", Click: act(func() { a.SaveToCurrentOrDialog(true) })},
@@ -128,15 +161,15 @@ func buildMenu(a *app.App) *mygo.Menu {
 			mygo.Separator(),
 			{Role: mygo.RoleClose},
 		}},
-		{Role: mygo.RoleEditMenu},
+		editItem,
 		{Label: a.T("menu.format"), Submenu: []*mygo.MenuItem{
 			{Label: a.T("menu.format.oneClick"), Accelerator: "CmdOrCtrl+Shift+F", Click: act(func() { a.FormatOneClick("") })},
-			{Label: a.T("menu.format.layered"), Click: act(func() { a.FormatWithStrategy("layered", "") })},
-			{Label: a.T("menu.format.tree"), Click: act(func() { a.FormatWithStrategy("tree", "") })},
-			{Label: a.T("menu.format.grid"), Click: act(func() { a.FormatWithStrategy("grid", "") })},
-			{Label: a.T("menu.format.radial"), Click: act(func() { a.FormatWithStrategy("radial", "") })},
-			{Label: a.T("menu.format.swimlane"), Click: act(func() { a.FormatWithStrategy("swimlane", "") })},
-			{Label: a.T("menu.format.compact"), Click: act(func() { a.FormatWithStrategy("compact", "") })},
+			{Label: a.T("menu.format.layered"), Accelerator: "Alt+1", Click: act(func() { a.FormatWithStrategy("layered", "") })},
+			{Label: a.T("menu.format.tree"), Accelerator: "Alt+2", Click: act(func() { a.FormatWithStrategy("tree", "") })},
+			{Label: a.T("menu.format.grid"), Accelerator: "Alt+3", Click: act(func() { a.FormatWithStrategy("grid", "") })},
+			{Label: a.T("menu.format.radial"), Accelerator: "Alt+4", Click: act(func() { a.FormatWithStrategy("radial", "") })},
+			{Label: a.T("menu.format.swimlane"), Accelerator: "Alt+5", Click: act(func() { a.FormatWithStrategy("swimlane", "") })},
+			{Label: a.T("menu.format.compact"), Accelerator: "Alt+6", Click: act(func() { a.FormatWithStrategy("compact", "") })},
 			mygo.Separator(),
 			{Label: a.T("menu.format.lr"), Click: act(func() { a.FormatOneClick("LR") })},
 			{Label: a.T("menu.format.tb"), Click: act(func() { a.FormatOneClick("TB") })},
@@ -152,18 +185,14 @@ func buildMenu(a *app.App) *mygo.Menu {
 			{Label: a.T("menu.view.zoom100"), Accelerator: "CmdOrCtrl+0", Click: act(func() { a.ResetZoom() })},
 			{Label: a.T("menu.view.zoomFit"), Accelerator: "CmdOrCtrl+Shift+0", Click: act(func() { a.ZoomToFit() })},
 			mygo.Separator(),
-			{Label: a.T("menu.view.sidebar"), Click: act(func() { a.SidebarOpen = !a.SidebarOpen })},
-			{Label: a.T("menu.view.inspector"), Click: act(func() { a.InspectorOpen = !a.InspectorOpen })},
-			{Label: a.T("menu.view.minimap"), Click: act(func() { a.MinimapOpen = !a.MinimapOpen })},
+			{Label: a.T("menu.view.sidebar"), Accelerator: "CmdOrCtrl+B", Click: act(func() { a.SidebarOpen = !a.SidebarOpen })},
+			{Label: a.T("menu.view.inspector"), Accelerator: "CmdOrCtrl+\\", Click: act(func() { a.InspectorOpen = !a.InspectorOpen })},
+			{Label: a.T("menu.view.minimap"), Accelerator: "CmdOrCtrl+M", Click: act(func() { a.MinimapOpen = !a.MinimapOpen })},
 			{Role: mygo.RoleToggleFullScreen},
 		}},
 		{Label: a.T("menu.language"), Submenu: languageMenuItems(a, act)},
-		{Label: a.T("menu.help"), Submenu: []*mygo.MenuItem{
-			{Label: a.T("menu.help.checkUpdates"), Click: act(func() { a.UpdateOpen = true; a.CheckUpdates(true) })},
-			{Label: a.T("menu.help.updateSettings"), Click: act(func() { a.UpdateOpen = true })},
-		}},
-		{Role: mygo.RoleWindowMenu},
-	})
+	}
+	return mygo.NewMenu(append(items, tailItems...))
 }
 
 func languageMenuItems(a *app.App, act func(func()) func(*mygo.MenuItem, *mygo.Window)) []*mygo.MenuItem {

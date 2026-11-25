@@ -16,13 +16,14 @@ func (a *App) handleShortcuts(c *ui.Context) {
 		}
 		return
 	}
-	if a.PluginsOpen || a.HabitsOpen || a.UpdateOpen || a.PaletteOpen || a.MermaidOpen {
+	if a.PluginsOpen || a.HabitsOpen || a.UpdateOpen || a.PaletteOpen || a.MermaidOpen || a.ShortcutsOpen {
 		if c.Shortcut(0, ui.KeyEscape) {
 			a.PluginsOpen = false
 			a.HabitsOpen = false
 			a.UpdateOpen = false
 			a.PaletteOpen = false
 			a.MermaidOpen = false
+			a.ShortcutsOpen = false
 		}
 		return
 	}
@@ -30,11 +31,31 @@ func (a *App) handleShortcuts(c *ui.Context) {
 	cmd := ui.Cmd
 	shift := ui.Shift
 
+	// Shortcuts Cheat-Sheet Modal (? or Cmd/Ctrl+/)
+	if c.Shortcut(cmd, ui.KeySlash) || c.Shortcut(shift, ui.KeySlash) {
+		a.ShortcutsOpen = !a.ShortcutsOpen
+		return
+	}
+
 	// Command Palette & Search (Cmd/Ctrl+K or Cmd/Ctrl+F)
 	if c.Shortcut(cmd, ui.KeyK) || c.Shortcut(cmd, ui.KeyF) {
 		a.PaletteQuery = ""
 		a.PaletteOpen = true
 		return
+	}
+
+	// Panel toggles
+	if c.Shortcut(cmd, ui.KeyB) {
+		a.SidebarOpen = !a.SidebarOpen
+	}
+	if c.Shortcut(cmd, ui.KeyBackslash) {
+		a.InspectorOpen = !a.InspectorOpen
+	}
+	if c.Shortcut(cmd, ui.KeyM) {
+		a.MinimapOpen = !a.MinimapOpen
+	}
+	if c.Shortcut(cmd|shift, ui.KeyM) {
+		a.MermaidOpen = true
 	}
 
 	// Tools
@@ -47,21 +68,45 @@ func (a *App) handleShortcuts(c *ui.Context) {
 	if c.Shortcut(0, ui.KeyC) {
 		a.Tool = ToolConnect
 	}
-	if c.Shortcut(0, ui.KeyR) {
+	if c.Shortcut(0, ui.KeyR) || c.Shortcut(0, ui.Key1) {
 		a.Tool = ToolShape
 		a.Shape = graph.KindRounded
 	}
-	if c.Shortcut(0, ui.KeyO) {
+	if c.Shortcut(0, ui.KeyO) || c.Shortcut(0, ui.Key2) {
 		a.Tool = ToolShape
 		a.Shape = graph.KindEllipse
 	}
-	if c.Shortcut(0, ui.KeyD) {
+	if c.Shortcut(0, ui.KeyD) || c.Shortcut(0, ui.Key3) {
 		a.Tool = ToolShape
 		a.Shape = graph.KindDiamond
 	}
-	if c.Shortcut(0, ui.KeyT) {
+	if c.Shortcut(0, ui.KeyT) || c.Shortcut(0, ui.Key4) {
 		a.Tool = ToolShape
 		a.Shape = graph.KindText
+	}
+	if c.Shortcut(0, ui.KeyG) {
+		a.ShowGrid = !a.ShowGrid
+	}
+	if c.Shortcut(0, ui.KeyF) || c.Shortcut(shift, ui.Key1) {
+		a.ZoomToFit()
+	}
+	if c.Shortcut(shift, ui.Key2) {
+		a.ZoomToSelection()
+	}
+
+	// Quick 6-strategy layout shortcuts (Alt+1..6)
+	for i, strat := range []string{"layered", "tree", "grid", "radial", "swimlane", "compact"} {
+		if c.Shortcut(ui.Alt, ui.Key1+ui.Key(i)) {
+			a.FormatWithStrategy(strat, "")
+		}
+	}
+
+	// Z-order shortcuts (Cmd+] / Cmd+[)
+	if c.Shortcut(cmd, ui.KeyBracketRight) {
+		a.ReorderSelection(graph.ZOrderFront)
+	}
+	if c.Shortcut(cmd, ui.KeyBracketLeft) {
+		a.ReorderSelection(graph.ZOrderBack)
 	}
 
 	// Undo / Redo / File / Clipboard / Edit

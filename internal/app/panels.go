@@ -28,44 +28,53 @@ func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
 	if bar.Height > h {
 		h = bar.Height
 	}
-	ui.Row(c).Height(h).Shrink(0).Gap(3).AlignItems(ui.Center).
-		Padding(0, bar.Right+8, 0, bar.Left+8).
+	ui.Row(c).Height(h).Shrink(0).Gap(4).AlignItems(ui.Center).
+		Padding(0, bar.Right+10, 0, bar.Left+10).
 		Background(tk.BgContainer).
 		BorderWidth(0, 0, 1, 0).BorderColor(tk.BorderSecondary).
 		DragWindow().Children(func() {
-		// Brand
-		ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Size(22, 22).Radius(6).Background(tk.Primary).Center().Children(func() {
-				ui.Icon(c, lucide.Workflow()).FontSize(13).TextColor(tk.PrimaryForeground)
+		// Vercel Gradient Triangle Brand
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(24, 24).Radius(7).LinearGradient(ui.LinearGradient{
+				From:  vercelPink,
+				To:    vercelBlue,
+				Angle: 135,
+				Oklab: true,
+			}).Center().Children(func() {
+				ui.Icon(c, lucide.Triangle()).FontSize(12).TextColor(ui.Hex("#FFFFFF"))
 			})
-			ui.Text(c, a.T("app.name")).FontSize(13).FontWeight(600).TextColor(tk.Text).SingleLine()
+			ui.Text(c, a.T("app.name")).FontSize(13).FontWeight(700).TextColor(tk.Text).SingleLine()
 		})
 
 		dividerV(c, tk)
 
-		// File Actions
-		if action.ActionIcon(c, lucide.FilePlus(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.new")}).Clicked() {
-			a.NewBlankDocument()
-		}
-		if action.ActionIcon(c, lucide.FolderOpen(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.open")}).Clicked() {
-			a.OpenFromDialog()
-		}
-		if action.ActionIcon(c, lucide.Save(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.save")}).Clicked() {
-			a.SaveToCurrentOrDialog(false)
-		}
-		if action.ActionIcon(c, lucide.ImagePlus(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.media")}).Clicked() {
-			a.ImportMediaFromDialog()
-		}
-		if action.ActionIcon(c, lucide.FileCode(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.mermaid")}).Clicked() {
-			a.MermaidOpen = true
-		}
-		if action.Button(c, a.T("tb.exportSVG"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+		// File + Import Actions inside subtle pill frame
+		ui.Row(c).Gap(2).Padding(2).Radius(8).Background(tk.FillQuaternary).Children(func() {
+			if action.ActionIcon(c, lucide.FilePlus(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.new")}).Clicked() {
+				a.NewBlankDocument()
+			}
+			if action.ActionIcon(c, lucide.FolderOpen(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.open")}).Clicked() {
+				a.OpenFromDialog()
+			}
+			if action.ActionIcon(c, lucide.Save(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.save")}).Clicked() {
+				a.SaveToCurrentOrDialog(false)
+			}
+			if action.ActionIcon(c, lucide.ImagePlus(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.media")}).Clicked() {
+				a.ImportMediaFromDialog()
+			}
+			if action.ActionIcon(c, lucide.FileCode(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.mermaid")}).Clicked() {
+				a.MermaidOpen = true
+			}
+		})
+
+		// Color-coded Export Badges
+		if vercelTintPill(c, tk, vercelEmerald, nil, a.T("tb.exportSVG"), false).Clicked() {
 			a.ExportDialog("svg")
 		}
-		if action.Button(c, a.T("tb.exportPNG"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+		if vercelTintPill(c, tk, vercelBlue, nil, a.T("tb.exportPNG"), false).Clicked() {
 			a.ExportDialog("png")
 		}
-		if action.Button(c, a.T("tb.exportDrawio"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+		if vercelTintPill(c, tk, vercelViolet, nil, a.T("tb.exportDrawio"), false).Clicked() {
 			a.ExportDialog("drawio")
 		}
 
@@ -79,30 +88,35 @@ func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
 			a.Redo()
 		}
 
+		// Segmented Canvas Tools Capsule
+		ui.Row(c).Gap(2).Padding(2).Radius(8).Background(tk.FillQuaternary).BorderWidth(1).BorderColor(tk.BorderSecondary).Children(func() {
+			a.toolButton(c, tk, ToolSelect, lucide.MousePointer2(), a.T("tb.toolSelect"))
+			a.toolButton(c, tk, ToolHand, lucide.Hand(), a.T("tb.toolHand"))
+			a.toolButton(c, tk, ToolConnect, lucide.ArrowUpRight(), a.T("tb.toolConnect"))
+		})
+
 		dividerV(c, tk)
 
-		// Primary Canvas Tools
-		a.toolButton(c, tk, ToolSelect, lucide.MousePointer2(), a.T("tb.toolSelect"))
-		a.toolButton(c, tk, ToolHand, lucide.Hand(), a.T("tb.toolHand"))
-		a.toolButton(c, tk, ToolConnect, lucide.ArrowUpRight(), a.T("tb.toolConnect"))
-
-		dividerV(c, tk)
-
-		// One-Click Elegant Format + Strategy & Direction quick switches!
-		if iconButton(c, lucide.Sparkles(), a.T("tb.format"), action.ButtonProps{
-			Variant: action.Primary,
-			Size:    theme.Small,
-		}).Clicked() {
+		// Vercel Signature Gradient CTA: One-Click Format + Color-Coded Strategy Pill
+		if vercelGradientButton(c, lucide.Sparkles(), a.T("tb.format"), true).Clicked() {
 			a.FormatOneClick("")
 		}
 		curStrat := a.LayoutStrategy
 		if curStrat == "" {
 			curStrat = "layered"
 		}
-		if action.Button(c, strings.ToUpper(curStrat[:1])+curStrat[1:], action.ButtonProps{
-			Variant: action.Filled,
-			Size:    theme.Small,
-		}).Clicked() {
+		sAccent := strategyAccent(curStrat)
+		sLabel := a.T("strat." + curStrat)
+		if sLabel == "strat."+curStrat {
+			sLabel = strings.ToUpper(curStrat[:1]) + curStrat[1:]
+		}
+		if b := ui.ButtonBase(c).Label("Strategy "+curStrat).Height(26).Padding(0, 8).Radius(7).
+			Row().AlignItems(ui.Center).Gap(5).
+			Background(sAccent.Alpha(0.11)).BorderWidth(1).BorderColor(sAccent.Alpha(0.35)).
+			Children(func() {
+				ui.Box(c).Size(7, 7).Radius(4).Background(sAccent)
+				ui.Text(c, sLabel).FontSize(11).FontWeight(600).TextColor(sAccent).SingleLine()
+			}); b.Clicked() {
 			all := dglayout.RegisteredStrategies()
 			if len(all) > 0 {
 				next := all[0]
@@ -115,12 +129,10 @@ func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
 				a.FormatWithStrategy(next, "")
 			}
 		}
+
 		pref := a.Habits.Snapshot()
 		dirLabel := pref.PreferredDirection
-		if action.Button(c, dirLabel, action.ButtonProps{
-			Variant: action.Filled,
-			Size:    theme.Small,
-		}).Clicked() {
+		if vercelTintPill(c, tk, vercelCyan, nil, dirLabel, false).Clicked() {
 			nextDir := "TB"
 			if dirLabel == "TB" {
 				nextDir = "LR"
@@ -147,37 +159,42 @@ func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
 
 		ui.Spacer(c)
 
-		// Command Palette / Node Finder
+		// Command Palette Search
 		if action.ActionIcon(c, lucide.Search(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.search")}).Clicked() {
 			a.PaletteQuery = ""
 			a.PaletteOpen = true
 		}
 
-		// Zoom Controls
-		if action.ActionIcon(c, lucide.ZoomOut(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.zoomOut")}).Clicked() {
-			a.ZoomOut()
-		}
-		if action.Button(c, fmt.Sprintf("%d%%", int(a.Cam.Zoom*100)), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
-			a.ResetZoom()
-		}
-		if action.ActionIcon(c, lucide.ZoomIn(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.zoomIn")}).Clicked() {
-			a.ZoomIn()
-		}
-		if action.ActionIcon(c, lucide.Maximize2(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.zoomFit")}).Clicked() {
-			a.ZoomToFit()
-		}
+		// Zoom Pill
+		ui.Row(c).Gap(1).Padding(2).Radius(7).Background(tk.FillQuaternary).AlignItems(ui.Center).Children(func() {
+			if action.ActionIcon(c, lucide.ZoomOut(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.zoomOut")}).Clicked() {
+				a.ZoomOut()
+			}
+			if action.Button(c, fmt.Sprintf("%d%%", int(a.Cam.Zoom*100)), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+				a.ResetZoom()
+			}
+			if action.ActionIcon(c, lucide.ZoomIn(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.zoomIn")}).Clicked() {
+				a.ZoomIn()
+			}
+			if action.ActionIcon(c, lucide.Maximize2(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.zoomFit")}).Clicked() {
+				a.ZoomToFit()
+			}
+		})
 
-		dividerV(c, tk)
-
-		// Grid, Theme, Quick Language Cycle, Plugin/Habit Drawers
-		if action.ActionIcon(c, lucide.Grid3x3(), action.ActionIconProps{
+		// Grid, Theme, Shortcuts, Language, Plugins, Habits
+		gridBtn := action.ActionIcon(c, lucide.Grid3x3(), action.ActionIconProps{
 			Variant: boolIconVariant(a.ShowGrid),
 			Size:    theme.Small,
 			Title:   a.T("tb.grid"),
-		}).Clicked() {
+		})
+		if a.ShowGrid {
+			gridBtn.Background(vercelCyan.Alpha(0.14))
+		}
+		if gridBtn.Clicked() {
 			a.ShowGrid = !a.ShowGrid
 			_ = a.Habits.Update(func(p *habits.Profile) { p.ShowGrid = a.ShowGrid })
 		}
+
 		themeIcon := lucide.Sun()
 		if a.DarkActive {
 			themeIcon = lucide.Moon()
@@ -190,19 +207,19 @@ func (a *App) toolbar(c *ui.Context, tk *theme.Tokens) {
 			}
 			_ = a.Habits.Update(func(p *habits.Profile) { p.ThemeMode = a.ThemeMode })
 		}
+
+		if action.ActionIcon(c, lucide.Keyboard(), action.ActionIconProps{Size: theme.Small, Title: a.T("tb.shortcuts")}).Clicked() {
+			a.ShortcutsOpen = true
+		}
+
 		if action.ActionIcon(c, lucide.Languages(), action.ActionIconProps{Size: theme.Small, Title: a.T("drawer.language")}).Clicked() {
 			cycleNextLanguage(a)
 		}
-		if iconButton(c, lucide.GitBranch(), a.T("tb.iconPlugins"), action.ButtonProps{
-			Variant: action.Filled,
-			Size:    theme.Small,
-		}).Clicked() {
+
+		if vercelTintPill(c, tk, vercelViolet, lucide.GitBranch(), a.T("tb.iconPlugins"), a.PluginsOpen).Clicked() {
 			a.PluginsOpen = true
 		}
-		if iconButton(c, lucide.SlidersHorizontal(), a.T("tb.habits"), action.ButtonProps{
-			Variant: action.Filled,
-			Size:    theme.Small,
-		}).Clicked() {
+		if vercelTintPill(c, tk, vercelBlue, lucide.SlidersHorizontal(), a.T("tb.habits"), a.HabitsOpen).Clicked() {
 			a.HabitsOpen = true
 		}
 	})
@@ -226,25 +243,13 @@ func cycleNextLanguage(a *App) {
 }
 
 func (a *App) toolButton(c *ui.Context, tk *theme.Tokens, tool Tool, icon *ui.SVG, title string) {
-	variant := action.ActionIconBorderless
-	if a.Tool == tool {
-		variant = action.ActionIconFilled
-	}
-	b := action.ActionIcon(c, icon, action.ActionIconProps{
-		Variant: variant,
-		Size:    theme.Small,
-		Title:   title,
-	})
-	if a.Tool == tool {
-		b.BorderWidth(1).BorderColor(tk.Primary.Alpha(0.45))
-	}
-	if b.Clicked() {
+	if toolPill(c, tk, a.Tool == tool, icon, title).Clicked() {
 		a.Tool = tool
 	}
 }
 
 func (a *App) sidebar(c *ui.Context, tk *theme.Tokens) {
-	ui.Column(c).Width(258).Shrink(0).Padding(10).Gap(10).
+	ui.Column(c).Width(264).Shrink(0).Padding(10).Gap(10).
 		Background(tk.BgContainer).
 		BorderWidth(0, 1, 0, 0).BorderColor(tk.BorderSecondary).Children(func() {
 		sb := field.SearchBar(c, &a.IconSearch, field.SearchBarProps{
@@ -256,56 +261,96 @@ func (a *App) sidebar(c *ui.Context, tk *theme.Tokens) {
 
 		layout.ScrollArea(c, layout.ScrollAreaProps{Fade: true}, func() {
 			ui.Column(c).Gap(12).Children(func() {
-				// Core draw.io Shapes
-				ui.Text(c, a.T("side.coreShapes")).FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
+				// Categorized Color Shapes Grid
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					ui.Box(c).Size(6, 6).Radius(3).Background(vercelBlue)
+					ui.Text(c, a.T("side.coreShapes")).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tk.TextSecondary)
+				})
 				q := strings.ToLower(strings.TrimSpace(a.IconSearch))
 				ui.Row(c).Gap(6).Wrap().Children(func() {
 					for _, k := range graph.AllNodeKinds {
-						name := string(k)
-						if q != "" && !strings.Contains(name, q) {
+						rawName := string(k)
+						dispName := a.T("shape." + rawName)
+						if dispName == "shape."+rawName {
+							dispName = rawName
+						}
+						if q != "" && !strings.Contains(rawName, q) && !strings.Contains(strings.ToLower(dispName), q) {
 							continue
 						}
-						btn := action.Button(c, name, action.ButtonProps{
-							Variant: action.Default,
-							Size:    theme.Small,
-						})
+						accent := shapeCategoryColor(k)
+						btn := ui.ButtonBase(c).Label(rawName).Height(26).Padding(0, 8).Radius(7).
+							Row().AlignItems(ui.Center).Gap(5).
+							Background(accent.Alpha(0.08)).BorderWidth(1).BorderColor(accent.Alpha(0.24)).
+							Children(func() {
+								ui.Box(c).Size(6, 6).Radius(3).Background(accent)
+								ui.Text(c, dispName).FontSize(11).FontWeight(500).TextColor(tk.Text).SingleLine()
+							})
 						if btn.Clicked() {
 							a.QuickInsertShape(k, "", "")
 						}
 					}
 				})
 
-				// Quick Architecture / Flow Templates
+				// Colorful Vercel Quick Templates Cards
 				if q == "" {
-					ui.Text(c, a.T("side.templates")).FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
-					ui.Row(c).Gap(6).Wrap().Children(func() {
-						for _, tpl := range []struct{ id, label string }{
-							{"arch", "Cloud Arch"},
-							{"flow", "Decision Flow"},
-							{"microservices", "Microservices"},
-							{"org", "Org Tree"},
-						} {
-							t := tpl
-							if action.Button(c, t.label, action.ButtonProps{Variant: action.Filled, Size: theme.Small}).Clicked() {
-								a.ApplyBuiltinTemplate(t.id)
-							}
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						ui.Box(c).Size(6, 6).Radius(3).Background(vercelPink)
+						ui.Text(c, a.T("side.templates")).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tk.TextSecondary)
+					})
+					tpls := []struct {
+						id, titleKey, subKey string
+						accent               ui.Color
+					}{
+						{"arch", "tpl.arch", "tpl.archSub", vercelBlue},
+						{"flow", "tpl.flow", "tpl.flowSub", vercelEmerald},
+						{"microservices", "tpl.microservices", "tpl.microservicesSub", vercelViolet},
+						{"org", "tpl.org", "tpl.orgSub", vercelAmber},
+					}
+					ui.Column(c).Gap(6).Children(func() {
+						for i := 0; i < len(tpls); i += 2 {
+							ui.Row(c).Gap(6).Children(func() {
+								for j := i; j < i+2 && j < len(tpls); j++ {
+									t := tpls[j]
+									card := ui.ButtonBase(c).Label(t.id).Grow(1).Basis(0).Padding(8, 9).Radius(8).
+										Column().Gap(2).
+										Background(t.accent.Alpha(0.09)).BorderWidth(1).BorderColor(t.accent.Alpha(0.28)).
+										Children(func() {
+											ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
+												ui.Box(c).Size(6, 6).Radius(3).Background(t.accent)
+												ui.Text(c, a.T(t.titleKey)).FontSize(11).FontWeight(600).TextColor(t.accent).SingleLine()
+											})
+											sub := a.T(t.subKey)
+											if sub != t.subKey {
+												ui.Text(c, sub).FontSize(10).TextColor(tk.TextTertiary).SingleLine()
+											}
+										})
+									if card.Clicked() {
+										a.ApplyBuiltinTemplate(t.id)
+									}
+								}
+							})
 						}
 					})
 				}
 
-				// Favorite Icons (remembered across projects)
+				// Favorite Icons (remembered across projects) in Semantic Colors
 				favs := a.Habits.Snapshot().FavoriteIcons
 				if len(favs) > 0 && q == "" {
-					ui.Text(c, a.T("side.favorites")).FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						ui.Box(c).Size(6, 6).Radius(3).Background(vercelCyan)
+						ui.Text(c, a.T("side.favorites")).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tk.TextSecondary)
+					})
 					ui.Row(c).Gap(6).Wrap().Children(func() {
 						for _, ref := range favs {
 							svg, ok := a.Icons.ParsedSVG(ref)
 							if !ok {
 								continue
 							}
+							col := iconRefColor(ref)
 							if b := ui.ButtonBase(c).Label("Fav "+ref).Size(36, 36).Radius(8).
-								Background(tk.FillTertiary).Center().Children(func() {
-								ui.Icon(c, svg).FontSize(18).TextColor(tk.Text)
+								Background(col.Alpha(0.12)).BorderWidth(1).BorderColor(col.Alpha(0.28)).
+								Center().Children(func() {
+								ui.Icon(c, svg).FontSize(18).TextColor(col)
 							}); b.Clicked() {
 								a.insertOrAssignIcon(ref)
 							}
@@ -314,10 +359,11 @@ func (a *App) sidebar(c *ui.Context, tk *theme.Tokens) {
 				}
 
 				// Pack Filter + Git Install Shortcut
-				ui.Row(c).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, a.T("side.iconLibrary")).FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					ui.Box(c).Size(6, 6).Radius(3).Background(vercelViolet)
+					ui.Text(c, a.T("side.iconLibrary")).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tk.TextSecondary)
 					ui.Spacer(c)
-					if action.Button(c, a.T("side.addGitPack"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+					if vercelTintPill(c, tk, vercelViolet, nil, a.T("side.addGitPack"), false).Clicked() {
 						a.PluginsOpen = true
 					}
 				})
@@ -346,12 +392,15 @@ func (a *App) sidebar(c *ui.Context, tk *theme.Tokens) {
 						if !ok {
 							continue
 						}
+						col := iconCategoryColor(ic)
 						cell := ui.ButtonBase(c).Label("Icon " + ic.Ref()).
-							Width(72).Height(62).Radius(8).Column().Center().Gap(4).Padding(4).
-							Background(tk.FillTertiary)
+							Width(74).Height(64).Radius(9).Column().Center().Gap(4).Padding(4).
+							Background(tk.BgLayout).BorderWidth(1).BorderColor(tk.BorderSecondary)
 						cell.Children(func() {
-							ui.Icon(c, svg).FontSize(18).TextColor(tk.Text)
-							ui.Text(c, ic.Name).FontSize(10).TextColor(tk.TextSecondary).SingleLine().MaxWidth(64)
+							ui.Box(c).Size(28, 28).Radius(7).Background(col.Alpha(0.14)).Center().Children(func() {
+								ui.Icon(c, svg).FontSize(16).TextColor(col)
+							})
+							ui.Text(c, ic.Name).FontSize(10).FontWeight(500).TextColor(tk.TextSecondary).SingleLine().MaxWidth(66)
 						})
 						if cell.Clicked() {
 							a.insertOrAssignIcon(ic.Ref())
@@ -384,11 +433,23 @@ func (a *App) pageBar(c *ui.Context, tk *theme.Tokens) {
 		Background(tk.BgContainer).BorderWidth(1, 0, 0, 0).BorderColor(tk.BorderSecondary).Children(func() {
 		for _, p := range a.Doc().Pages {
 			active := p.ID == a.Doc().ActivePageID
-			variant := action.Text
+			bg := tk.FillQuaternary
+			border := tk.BorderSecondary
+			txtCol := tk.TextSecondary
 			if active {
-				variant = action.Filled
+				bg = vercelBlue.Alpha(0.12)
+				border = vercelBlue.Alpha(0.45)
+				txtCol = vercelBlue
 			}
-			if action.Button(c, p.Name, action.ButtonProps{Variant: variant, Size: theme.Small}).Clicked() {
+			tab := ui.ButtonBase(c).Label(p.Name).Height(24).Padding(0, 10).Radius(6).
+				Row().AlignItems(ui.Center).Gap(5).Background(bg).BorderWidth(1).BorderColor(border).
+				Children(func() {
+					if active {
+						ui.Box(c).Size(6, 6).Radius(3).Background(vercelBlue)
+					}
+					ui.Text(c, p.Name).FontSize(11).FontWeight(600).TextColor(txtCol).SingleLine()
+				})
+			if tab.Clicked() {
 				a.Doc().ActivePageID = p.ID
 				a.SelectedNodes = map[string]bool{}
 				a.SelectedEdges = map[string]bool{}
@@ -430,9 +491,16 @@ func (a *App) inspector(c *ui.Context, tk *theme.Tokens) {
 	})
 }
 
+func inspectorHeader(c *ui.Context, tk *theme.Tokens, title string, accent ui.Color) {
+	ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+		ui.Box(c).Size(8, 8).Radius(4).Background(accent)
+		ui.Text(c, title).FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(accent)
+	})
+}
+
 func (a *App) nodeInspector(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
 	ui.Column(c).Gap(10).Children(func() {
-		ui.Text(c, a.T("insp.nodeTitle")).FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
+		inspectorHeader(c, tk, a.T("insp.nodeTitle"), vercelBlue)
 
 		label := n.Label
 		ui.Column(c).Gap(4).Children(func() {
@@ -461,7 +529,11 @@ func (a *App) nodeInspector(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
 		kindStr := string(n.Kind)
 		kindOpts := make([]field.SelectOption, 0, len(graph.AllNodeKinds))
 		for _, k := range graph.AllNodeKinds {
-			kindOpts = append(kindOpts, field.SelectOption{Value: string(k), Label: string(k)})
+			lbl := a.T("shape." + string(k))
+			if lbl == "shape."+string(k) {
+				lbl = string(k)
+			}
+			kindOpts = append(kindOpts, field.SelectOption{Value: string(k), Label: lbl})
 		}
 		ui.Column(c).Gap(4).Children(func() {
 			ui.Text(c, a.T("insp.shape")).FontSize(11).TextColor(tk.TextTertiary)
@@ -478,9 +550,16 @@ func (a *App) nodeInspector(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
 		ui.Column(c).Gap(4).Children(func() {
 			ui.Text(c, a.T("insp.fillColor")).FontSize(11).TextColor(tk.TextTertiary)
 			ui.Row(c).Gap(6).Wrap().Children(func() {
-				for _, hex := range []string{"#FFFFFF", "#EFF6FF", "#ECFDF5", "#FEF3C7", "#F5F3FF", "#FFF1F2", "#1E293B"} {
-					sw := ui.ButtonBase(c).Label("Fill "+hex).Size(22, 22).Radius(6).
-						Background(ui.Hex(hex)).BorderWidth(1).BorderColor(tk.Border)
+				for _, hex := range []string{"#FFFFFF", "#EFF6FF", "#ECFEFF", "#F5F3FF", "#ECFDF5", "#FDF2F8", "#FEF3C7", "#0F172A"} {
+					sel := strings.EqualFold(n.Style.Fill, hex)
+					bw := float32(1)
+					bc := tk.Border
+					if sel {
+						bw = 2
+						bc = vercelBlue
+					}
+					sw := ui.ButtonBase(c).Label("Fill "+hex).Size(22, 22).Radius(11).
+						Background(ui.Hex(hex)).BorderWidth(bw).BorderColor(bc)
 					if sw.Clicked() {
 						a.Hist.Snapshot()
 						n.Style.Fill = hex
@@ -494,9 +573,16 @@ func (a *App) nodeInspector(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
 		ui.Column(c).Gap(4).Children(func() {
 			ui.Text(c, a.T("insp.strokeColor")).FontSize(11).TextColor(tk.TextTertiary)
 			ui.Row(c).Gap(6).Wrap().Children(func() {
-				for _, hex := range []string{"#CBD5E1", "#3B82F6", "#10B981", "#F59E0B", "#8B5CF6", "#EF4444", "#0F172A"} {
-					sw := ui.ButtonBase(c).Label("Stroke "+hex).Size(22, 22).Radius(6).
-						Background(ui.Hex(hex)).BorderWidth(1).BorderColor(tk.Border)
+				for _, hex := range []string{"#0070F3", "#7928CA", "#FF0080", "#06B6D4", "#10B981", "#F59E0B", "#0F172A"} {
+					sel := strings.EqualFold(n.Style.Stroke, hex)
+					bw := float32(1)
+					bc := tk.Border
+					if sel {
+						bw = 2
+						bc = vercelBlue
+					}
+					sw := ui.ButtonBase(c).Label("Stroke "+hex).Size(22, 22).Radius(11).
+						Background(ui.Hex(hex)).BorderWidth(bw).BorderColor(bc)
 					if sw.Clicked() {
 						a.Hist.Snapshot()
 						n.Style.Stroke = hex
@@ -585,23 +671,23 @@ func (a *App) nodeInspector(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
 		}
 
 		ui.Row(c).Gap(6).Children(func() {
-			if action.Button(c, a.T("insp.bringFront"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+			if vercelTintPill(c, tk, vercelCyan, nil, a.T("insp.bringFront"), false).Clicked() {
 				a.ReorderSelection(graph.ZOrderFront)
 			}
-			if action.Button(c, a.T("insp.sendBack"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+			if vercelTintPill(c, tk, vercelIndigo, nil, a.T("insp.sendBack"), false).Clicked() {
 				a.ReorderSelection(graph.ZOrderBack)
 			}
-			if action.Button(c, a.T("insp.duplicate"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+			if vercelTintPill(c, tk, vercelBlue, nil, a.T("insp.duplicate"), false).Clicked() {
 				a.DuplicateSelection()
 			}
 		})
 
 		ui.Row(c).Gap(8).Children(func() {
-			if action.Button(c, a.T("insp.saveHabit"), action.ButtonProps{Variant: action.Filled, Size: theme.Small}).Clicked() {
+			if vercelTintPill(c, tk, vercelEmerald, nil, a.T("insp.saveHabit"), false).Clicked() {
 				a.Habits.RecordNodeHabit(n)
 				a.notifyToast(feedback.ToastSuccess, a.T("toast.habitSaved"), a.T("toast.habitSavedDesc"))
 			}
-			if action.Button(c, a.T("insp.delete"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).TextColor(tk.Error).Clicked() {
+			if vercelTintPill(c, tk, vercelPink, nil, a.T("insp.delete"), false).Clicked() {
 				a.DeleteSelection()
 			}
 		})
@@ -610,7 +696,7 @@ func (a *App) nodeInspector(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
 
 func (a *App) edgeInspector(c *ui.Context, tk *theme.Tokens, e *graph.Edge) {
 	ui.Column(c).Gap(10).Children(func() {
-		ui.Text(c, a.T("insp.edgeTitle")).FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
+		inspectorHeader(c, tk, a.T("insp.edgeTitle"), vercelViolet)
 
 		label := e.Label
 		ui.Column(c).Gap(4).Children(func() {
@@ -702,8 +788,8 @@ func (a *App) edgeInspector(c *ui.Context, tk *theme.Tokens, e *graph.Edge) {
 		ui.Column(c).Gap(4).Children(func() {
 			ui.Text(c, a.T("insp.strokeColor")).FontSize(11).TextColor(tk.TextTertiary)
 			ui.Row(c).Gap(6).Wrap().Children(func() {
-				for _, hex := range []string{"#64748B", "#2563EB", "#10B981", "#F59E0B", "#8B5CF6", "#EF4444"} {
-					sw := ui.ButtonBase(c).Label("Edge "+hex).Size(22, 22).Radius(6).
+				for _, hex := range []string{"#0070F3", "#7928CA", "#FF0080", "#06B6D4", "#10B981", "#F59E0B", "#64748B"} {
+					sw := ui.ButtonBase(c).Label("Edge "+hex).Size(22, 22).Radius(11).
 						Background(ui.Hex(hex)).BorderWidth(1).BorderColor(tk.Border)
 					if sw.Clicked() {
 						a.Hist.Snapshot()
@@ -715,14 +801,14 @@ func (a *App) edgeInspector(c *ui.Context, tk *theme.Tokens, e *graph.Edge) {
 		})
 
 		ui.Row(c).Gap(8).Children(func() {
-			if iconButton(c, lucide.ArrowLeftRight(), a.T("insp.swapEnds"), action.ButtonProps{Variant: action.Filled, Size: theme.Small}).Clicked() {
+			if vercelTintPill(c, tk, vercelBlue, lucide.ArrowLeftRight(), a.T("insp.swapEnds"), false).Clicked() {
 				a.Hist.Snapshot()
 				e.SourceID, e.TargetID = e.TargetID, e.SourceID
 				e.SourceAnchor, e.TargetAnchor = e.TargetAnchor, e.SourceAnchor
 				a.Page().MarkDirty()
 				a.notifyChanged()
 			}
-			if action.Button(c, a.T("insp.deleteEdge"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).TextColor(tk.Error).Clicked() {
+			if vercelTintPill(c, tk, vercelPink, nil, a.T("insp.deleteEdge"), false).Clicked() {
 				a.DeleteSelection()
 			}
 		})
@@ -731,7 +817,7 @@ func (a *App) edgeInspector(c *ui.Context, tk *theme.Tokens, e *graph.Edge) {
 
 func (a *App) documentInspector(c *ui.Context, tk *theme.Tokens) {
 	ui.Column(c).Gap(12).Children(func() {
-		ui.Text(c, a.T("insp.docTitle")).FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
+		inspectorHeader(c, tk, a.T("insp.docTitle"), vercelCyan)
 
 		title := a.Doc().Title
 		ui.Column(c).Gap(4).Children(func() {
@@ -799,10 +885,10 @@ func (a *App) documentInspector(c *ui.Context, tk *theme.Tokens) {
 		})
 
 		ui.Row(c).Gap(6).Children(func() {
-			if iconButton(c, lucide.Sparkles(), a.T("insp.formatLR"), action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Clicked() {
+			if vercelGradientButton(c, lucide.Sparkles(), a.T("insp.formatLR"), true).Clicked() {
 				a.FormatOneClick("LR")
 			}
-			if action.Button(c, a.T("insp.formatTB"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+			if vercelTintPill(c, tk, vercelCyan, nil, a.T("insp.formatTB"), false).Clicked() {
 				a.FormatOneClick("TB")
 			}
 		})
@@ -814,8 +900,9 @@ func (a *App) documentInspector(c *ui.Context, tk *theme.Tokens) {
 
 func (a *App) mediaInspectorSection(c *ui.Context, tk *theme.Tokens, n *graph.Node) {
 	asset := a.Doc().Assets[n.Media.AssetID]
-	ui.Column(c).Gap(8).Padding(10).Radius(8).Background(tk.FillTertiary).Children(func() {
-		ui.Text(c, a.T("media.title")).FontSize(10).FontWeight(600).LetterSpacing(0.5).TextColor(tk.TextQuaternary)
+	ui.Column(c).Gap(8).Padding(10).Radius(9).Background(vercelEmerald.Alpha(0.07)).
+		BorderWidth(1).BorderColor(vercelEmerald.Alpha(0.24)).Children(func() {
+		inspectorHeader(c, tk, a.T("media.title"), vercelEmerald)
 		if asset != nil && asset.NaturalW > 0 {
 			meta := fmt.Sprintf("Source: %d × %d px", asset.NaturalW, asset.NaturalH)
 			if asset.DurationSec > 0 {
@@ -823,10 +910,10 @@ func (a *App) mediaInspectorSection(c *ui.Context, tk *theme.Tokens, n *graph.No
 			}
 			ui.Text(c, meta).FontSize(11).TextColor(tk.TextSecondary)
 			ui.Row(c).Gap(6).Children(func() {
-				if action.Button(c, a.T("media.fit"), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+				if vercelTintPill(c, tk, vercelEmerald, nil, a.T("media.fit"), false).Clicked() {
 					a.ResizeMediaNode(n, false)
 				}
-				if action.Button(c, fmt.Sprintf("1:1 (%dx%d)", asset.NaturalW, asset.NaturalH), action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+				if vercelTintPill(c, tk, vercelBlue, nil, fmt.Sprintf("1:1 (%dx%d)", asset.NaturalW, asset.NaturalH), false).Clicked() {
 					a.ResizeMediaNode(n, true)
 				}
 			})
@@ -866,7 +953,7 @@ func (a *App) mediaInspectorSection(c *ui.Context, tk *theme.Tokens, n *graph.No
 				if !vp.player.Playing() {
 					lbl = a.T("media.play")
 				}
-				if action.Button(c, lbl, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Clicked() {
+				if vercelGradientButton(c, nil, lbl, true).Clicked() {
 					if vp.player.Playing() {
 						vp.player.Pause()
 					} else {
@@ -893,14 +980,17 @@ func (a *App) mediaInspectorSection(c *ui.Context, tk *theme.Tokens, n *graph.No
 }
 
 func (a *App) statusBar(c *ui.Context, tk *theme.Tokens) {
-	ui.Row(c).Height(28).Shrink(0).Gap(10).AlignItems(ui.Center).Padding(0, 12).
+	ui.Row(c).Height(30).Shrink(0).Gap(10).AlignItems(ui.Center).Padding(0, 12).
 		Background(tk.BgContainer).BorderWidth(1, 0, 0, 0).BorderColor(tk.BorderSecondary).Children(func() {
-		ui.Text(c, a.T("status.tool", a.Tool)).FontSize(11).TextColor(tk.TextTertiary)
+		ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
+			ui.Box(c).Size(6, 6).Radius(3).Background(vercelBlue)
+			ui.Text(c, a.T("status.tool", a.Tool)).FontSize(11).TextColor(tk.TextSecondary)
+		})
 		ui.Text(c, a.T("status.nodes", len(a.Page().Nodes))).FontSize(11).TextColor(tk.TextTertiary)
 		ui.Text(c, a.T("status.edges", len(a.Page().Edges))).FontSize(11).TextColor(tk.TextTertiary)
 		ui.Text(c, a.T("status.assets", len(a.Doc().Assets))).FontSize(11).TextColor(tk.TextTertiary)
 		if a.LastStats.TotalNodes > 0 {
-			ui.Text(c, a.T("status.visible", a.LastStats.VisibleNodes, a.LastStats.TotalNodes)).FontSize(11).TextColor(tk.TextQuaternary)
+			ui.Text(c, a.T("status.visible", a.LastStats.VisibleNodes, a.LastStats.TotalNodes)).FontSize(11).TextColor(vercelCyan)
 		}
 		cx, cy := -a.Cam.X, -a.Cam.Y
 		if a.CanvasRect.W > 0 && a.Cam.Zoom > 0 {
@@ -912,16 +1002,26 @@ func (a *App) statusBar(c *ui.Context, tk *theme.Tokens) {
 			a.ResetOrigin()
 		}
 		if a.Habits.Snapshot().AutoRemember {
-			ui.Text(c, a.T("status.habitOn")).FontSize(11).TextColor(tk.Success)
+			ui.Row(c).AlignItems(ui.Center).Gap(5).Padding(2, 7).Radius(99).
+				Background(vercelEmerald.Alpha(0.10)).BorderWidth(1).BorderColor(vercelEmerald.Alpha(0.28)).Children(func() {
+				ui.Box(c).Size(6, 6).Radius(3).Background(vercelEmerald)
+				ui.Text(c, a.T("status.habitOn")).FontSize(10).FontWeight(600).TextColor(vercelEmerald)
+			})
 		}
 		ui.Spacer(c)
 		if a.FilePath != "" {
-			ui.Text(c, a.FilePath).FontSize(11).TextColor(tk.TextQuaternary).SingleLine().MaxWidth(260)
+			ui.Text(c, a.FilePath).FontSize(11).TextColor(tk.TextQuaternary).SingleLine().MaxWidth(240)
 		}
-		if action.Button(c, a.statusUpdateLabel(), action.ButtonProps{
-			Variant: action.Text,
-			Size:    theme.Small,
-		}).Clicked() {
+		if b := ui.ButtonBase(c).Label("KeysHelp").Height(20).Padding(0, 7).Radius(99).
+			Row().AlignItems(ui.Center).Gap(4).
+			Background(vercelCyan.Alpha(0.10)).BorderWidth(1).BorderColor(vercelCyan.Alpha(0.30)).
+			Children(func() {
+				ui.Icon(c, lucide.Keyboard()).FontSize(11).TextColor(vercelCyan)
+				ui.Text(c, "?").FontSize(10).FontWeight(700).TextColor(vercelCyan)
+			}); b.Clicked() {
+			a.ShortcutsOpen = true
+		}
+		if vercelTintPill(c, tk, vercelBlue, nil, a.statusUpdateLabel(), a.UpdateState == updateAvailable).Clicked() {
 			a.UpdateOpen = true
 		}
 	})
@@ -934,6 +1034,7 @@ func (a *App) pluginsDrawer(c *ui.Context, tk *theme.Tokens) {
 		Title:     a.T("drawer.pluginsTitle"),
 	}, func() {
 		ui.Column(c).Gap(14).Children(func() {
+			vercelSpectrumBar(c, 3)
 			ui.Text(c, a.T("drawer.pluginsDesc")).
 				FontSize(12).LineHeight(1.5).TextColor(tk.TextSecondary)
 
@@ -951,7 +1052,7 @@ func (a *App) pluginsDrawer(c *ui.Context, tk *theme.Tokens) {
 					r2.Grow(1).Basis(0)
 				})
 				ui.Row(c).Gap(8).Children(func() {
-					if iconButton(c, lucide.GitBranch(), a.T("drawer.cloneGit"), action.ButtonProps{Variant: action.Primary, Size: theme.Small}).
+					if vercelGradientButton(c, lucide.GitBranch(), a.T("drawer.cloneGit"), true).
 						Disabled(a.PluginBusy || strings.TrimSpace(a.GitURL) == "").Clicked() {
 						a.InstallGitIconPack()
 					}
@@ -970,7 +1071,7 @@ func (a *App) pluginsDrawer(c *ui.Context, tk *theme.Tokens) {
 				layout.Block(c, layout.BlockProps{Variant: layout.BlockOutlined}).Padding(10).Gap(6).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 						ui.Text(c, pack.Name).FontSize(13).FontWeight(600).TextColor(tk.Text)
-						display.Tag(c, fmt.Sprintf("%d icons", len(pack.Icons)), display.TagProps{Size: theme.Small})
+						display.Tag(c, fmt.Sprintf("%d icons", len(pack.Icons)), display.TagProps{Size: theme.Small, Color: display.TagColor("#7928CA")})
 						ui.Spacer(c)
 						if !pack.Builtin {
 							if pack.SourceKind == "git" {
@@ -1012,6 +1113,7 @@ func (a *App) habitsDrawer(c *ui.Context, tk *theme.Tokens) {
 	}, func() {
 		p := a.Habits.Snapshot()
 		ui.Column(c).Gap(12).Children(func() {
+			vercelSpectrumBar(c, 3)
 			ui.Text(c, a.T("drawer.habitsDesc", a.Habits.Path())).
 				FontSize(12).LineHeight(1.5).TextColor(tk.TextSecondary)
 
@@ -1132,7 +1234,7 @@ func (a *App) habitsDrawer(c *ui.Context, tk *theme.Tokens) {
 			})
 
 			ui.Row(c).Gap(8).Children(func() {
-				if iconButton(c, lucide.Sparkles(), a.T("drawer.applyHabits"), action.ButtonProps{Variant: action.Primary, Size: theme.Middle}).Clicked() {
+				if vercelGradientButton(c, lucide.Sparkles(), a.T("drawer.applyHabits"), false).Clicked() {
 					a.Habits.ApplyToDocument(a.Doc())
 					a.FormatOneClick("")
 					a.HabitsOpen = false
@@ -1147,22 +1249,6 @@ func (a *App) habitsDrawer(c *ui.Context, tk *theme.Tokens) {
 			})
 		})
 	})
-}
-
-func iconButton(c *ui.Context, svg *ui.SVG, label string, p action.ButtonProps) ui.Element {
-	b := action.StyleButton(c, ui.ButtonBase(c), "", p)
-	if label != "" {
-		b.Label(label)
-	}
-	b.Row().AlignItems(ui.Center).Children(func() {
-		if svg != nil {
-			ui.Icon(c, svg).FontSize(14)
-		}
-		if label != "" {
-			ui.Text(c, label).SingleLine()
-		}
-	})
-	return b
 }
 
 func dividerV(c *ui.Context, tk *theme.Tokens) {

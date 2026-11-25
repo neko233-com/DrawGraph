@@ -8,7 +8,6 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/choice"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/field"
@@ -251,25 +250,17 @@ func (a *App) updateDrawer(c *ui.Context, tk *theme.Tokens) {
 					}
 				}
 				ui.Row(c).Gap(8).Children(func() {
-					if iconButton(c, lucide.RefreshCw(), a.T("drawer.checkNow"), action.ButtonProps{
-						Variant: action.Default,
-						Size:    theme.Small,
-					}).Disabled(a.UpdateState == updateChecking || a.UpdateState == updateDownloading).Clicked() {
+					if vercelTintPill(c, tk, vercelBlue, lucide.RefreshCw(), a.T("drawer.checkNow"), false).
+						Disabled(a.UpdateState == updateChecking || a.UpdateState == updateDownloading).Clicked() {
 						a.CheckUpdates(true)
 					}
 					if a.UpdateState == updateAvailable {
-						if action.Button(c, a.T("drawer.downloadUpdate"), action.ButtonProps{
-							Variant: action.Primary,
-							Size:    theme.Small,
-						}).Clicked() {
+						if vercelGradientButton(c, lucide.Download(), a.T("drawer.downloadUpdate"), true).Clicked() {
 							a.DownloadUpdate()
 						}
 					}
 					if a.UpdateState == updateReady {
-						if action.Button(c, a.T("drawer.installRestart"), action.ButtonProps{
-							Variant: action.Primary,
-							Size:    theme.Small,
-						}).Clicked() {
+						if vercelGradientButton(c, lucide.RotateCw(), a.T("drawer.installRestart"), true).Clicked() {
 							a.InstallUpdate()
 						}
 					}

@@ -507,11 +507,18 @@ func harmonizeNodes(page *graph.Page, preset habits.Preset, dark bool) int {
 			changed++
 			continue
 		}
-		// Keep explicit semantic fills if already set unless blank/default, while harmonizing border, radius, shadow & text.
-		if n.Style.Fill == "" {
-			n.Style.Fill = base.Fill
+		// Keep explicit custom fills while harmonizing Vercel semantic category fills for default/preset nodes.
+		fillCol, strokeCol := base.Fill, base.Stroke
+		if preset.ID == "vercel-color" {
+			fillCol, strokeCol = vercelSemanticColors(n, optsDarkFromBase(base))
+			n.Style.Fill = fillCol
+			n.Style.Stroke = strokeCol
+		} else {
+			if n.Style.Fill == "" {
+				n.Style.Fill = fillCol
+			}
+			n.Style.Stroke = strokeCol
 		}
-		n.Style.Stroke = base.Stroke
 		n.Style.StrokeWidth = base.StrokeWidth
 		if n.Kind == graph.KindRounded || n.Kind == graph.KindIcon {
 			n.Style.Radius = base.Radius
@@ -522,6 +529,49 @@ func harmonizeNodes(page *graph.Page, preset habits.Preset, dark bool) int {
 		changed++
 	}
 	return changed
+}
+
+func optsDarkFromBase(base graph.NodeStyle) bool {
+	return strings.EqualFold(base.TextColor, "#FAFAFA") || strings.EqualFold(base.TextColor, "#F8FAFC")
+}
+
+func vercelSemanticColors(n *graph.Node, dark bool) (fill, stroke string) {
+	icon := ""
+	if n.Icon.Valid() {
+		icon = strings.ToLower(n.Icon.Name)
+	}
+	switch {
+	case n.Kind == graph.KindCylinder || strings.Contains(icon, "database") || strings.Contains(icon, "storage"):
+		if dark {
+			return "#06281E", "#10B981"
+		}
+		return "#ECFDF5", "#10B981"
+	case n.Kind == graph.KindDiamond || strings.Contains(icon, "lock") || strings.Contains(icon, "firewall"):
+		if dark {
+			return "#2B1D06", "#F59E0B"
+		}
+		return "#FEF3C7", "#F59E0B"
+	case n.Kind == graph.KindCloud || strings.Contains(icon, "cache") || strings.Contains(icon, "cloud") || strings.Contains(icon, "load-balancer"):
+		if dark {
+			return "#062430", "#06B6D4"
+		}
+		return "#ECFEFF", "#06B6D4"
+	case strings.Contains(icon, "bot") || strings.Contains(icon, "brain") || strings.Contains(icon, "gateway") || strings.Contains(icon, "queue"):
+		if dark {
+			return "#1E1038", "#A855F7"
+		}
+		return "#F5F3FF", "#7928CA"
+	case n.Kind == graph.KindActor || n.Kind == graph.KindEllipse || strings.Contains(icon, "user") || strings.Contains(icon, "browser") || strings.Contains(icon, "mobile"):
+		if dark {
+			return "#2D0A22", "#EC4899"
+		}
+		return "#FDF2F8", "#FF0080"
+	default:
+		if dark {
+			return "#0B1D3A", "#3B82F6"
+		}
+		return "#EFF6FF", "#0070F3"
+	}
 }
 
 func fitNodeSizes(page *graph.Page, grid float64) {

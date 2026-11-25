@@ -259,7 +259,7 @@ func NewDocument(title string) *Document {
 		SnapToGrid:     true,
 		ThemeMode:      "auto",
 		DefaultRouting: RouteOrthogonal,
-		StylePreset:    "lobe-clean",
+		StylePreset:    "vercel-color",
 		Assets:         map[string]*MediaAsset{},
 		UpdatedAt:      time.Now().UTC(),
 		Pages: []*Page{

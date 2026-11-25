@@ -26,6 +26,7 @@ func (a *App) paletteModal(c *ui.Context, tk *theme.Tokens) {
 		NoFooter: true,
 	}, func() {
 		ui.Column(c).Gap(10).Children(func() {
+			vercelSpectrumBar(c, 3)
 			sb := field.SearchBar(c, &a.PaletteQuery, field.SearchBarProps{
 				Placeholder: a.T("palette.placeholder"),
 				Size:        theme.Middle,
@@ -134,6 +135,7 @@ func (a *App) mermaidModal(c *ui.Context, tk *theme.Tokens) {
 		OkText: a.T("mermaid.importBtn"),
 	}, func() {
 		ui.Column(c).Gap(10).Children(func() {
+			vercelSpectrumBar(c, 3)
 			ta := field.TextArea(c, &a.MermaidText, field.TextAreaProps{
 				Placeholder: a.T("mermaid.placeholder"),
 				MinRows:     8,

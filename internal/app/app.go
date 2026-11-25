@@ -107,6 +107,7 @@ type App struct {
 	PaletteQuery        string
 	MermaidOpen         bool
 	MermaidText         string
+	ShortcutsOpen       bool
 	ContextMenuPos      *[2]float32
 	UpdateState         updateState
 	UpdateRelease       *update.Release
@@ -250,6 +251,7 @@ func (a *App) View(c *ui.Context) {
 	a.handleShortcuts(c)
 
 	ui.Column(c).Fill().Background(tk.BgLayout).Children(func() {
+		vercelSpectrumBar(c, 3)
 		a.toolbar(c, tk)
 		ui.Row(c).Grow(1).Basis(0).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 			if a.SidebarOpen {
@@ -269,6 +271,7 @@ func (a *App) View(c *ui.Context) {
 		a.updateDrawer(c, tk)
 		a.paletteModal(c, tk)
 		a.mermaidModal(c, tk)
+		a.shortcutsModal(c, tk)
 		feedback.ToastHost(c, feedback.ToastHostProps{Placement: feedback.ToastBottomLeft})
 	})
 }

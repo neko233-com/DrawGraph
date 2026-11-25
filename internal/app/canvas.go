@@ -17,7 +17,7 @@ import (
 )
 
 func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
-	wrap := ui.Box(c.Key("canvas-wrap")).Grow(1).Basis(0).MinHeight(0)
+	wrap := ui.Box(c.Key("canvas-wrap")).Grow(1).Basis(0).MinHeight(0).Clip()
 	dragOver := wrap.FileDragOver()
 	dropped := wrap.DroppedFiles()
 	wrap.Children(func() {
@@ -60,11 +60,18 @@ func (a *App) canvasArea(c *ui.Context, tk *theme.Tokens) {
 
 		a.videoOverlayLayer(c, tk)
 
+		if len(a.Page().Nodes) == 0 && a.drag == dragNone && !dragOver {
+			a.emptyHeroOverlay(c, tk)
+		}
+		if a.Tool == ToolShape {
+			a.shapeModeBanner(c, tk)
+		}
+
 		if dragOver {
 			ui.Box(c.Key("drop-overlay")).Absolute().Top(12).Left(12).Right(12).Bottom(12).Radius(12).
-				Background(tk.Primary.Alpha(0.10)).BorderWidth(2).BorderColor(tk.Primary).Center().Children(func() {
-				ui.Box(c).Padding(12, 20).Radius(10).Background(tk.BgElevated).BorderWidth(1).BorderColor(tk.Primary).Children(func() {
-					ui.Text(c, a.T("canvas.dropHint")).FontSize(14).FontWeight(600).TextColor(tk.Primary)
+				Background(vercelBlue.Alpha(0.10)).BorderWidth(2).BorderColor(vercelBlue).Center().Children(func() {
+				ui.Box(c).Padding(12, 20).Radius(10).Background(tk.BgElevated).BorderWidth(1).BorderColor(vercelBlue).Children(func() {
+					ui.Text(c, a.T("canvas.dropHint")).FontSize(14).FontWeight(600).TextColor(vercelBlue)
 				})
 			})
 		}
@@ -148,6 +155,7 @@ func (a *App) handleCanvasInput(c *ui.Context, ev ui.InputEvent) bool {
 		return true
 
 	case ui.InputPointerDown:
+		a.CanvasHandle.Focus(c)
 		a.ContextMenuPos = nil
 		// Right-click opens canvas / selection context menu cleanly.
 		if ev.Button == 1 {
@@ -542,38 +550,111 @@ func (a *App) selectionQuickBar(c *ui.Context, tk *theme.Tokens) {
 	barY := max(float32(8), sy-44)
 	barX := max(float32(8), min(a.CanvasRect.W-340, sx-160))
 
-	bar := ui.Row(c.Key("sel-quick-bar")).Absolute().Left(barX).Top(barY).Height(32).Gap(4).Padding(0, 6).
-		Radius(8).AlignItems(ui.Center).Background(tk.BgElevated).
-		BorderWidth(1).BorderColor(tk.BorderSecondary)
+	bar := ui.Row(c.Key("sel-quick-bar")).Absolute().Left(barX).Top(barY).Height(34).Gap(4).Padding(0, 8).
+		Radius(9).AlignItems(ui.Center).Background(tk.BgElevated).
+		BorderWidth(1).BorderColor(vercelBlue.Alpha(0.35))
 	bar.Children(func() {
-		if action.Button(c, a.T("ctx.duplicate"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+		if vercelTintPill(c, tk, vercelBlue, nil, a.T("ctx.duplicate"), false).Clicked() {
 			a.DuplicateSelection()
 		}
 		if len(a.SelectedNodes) >= 2 {
-			if action.Button(c, a.T("ctx.group"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			if vercelTintPill(c, tk, vercelViolet, nil, a.T("ctx.group"), false).Clicked() {
 				a.GroupSelection()
 			}
 		} else if n := a.singleSelectedNode(); n != nil && (n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane) {
-			if action.Button(c, a.T("ctx.ungroup"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			if vercelTintPill(c, tk, vercelViolet, nil, a.T("ctx.ungroup"), false).Clicked() {
 				a.UngroupSelection()
 			}
 		}
-		if action.Button(c, a.T("ctx.front"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+		if vercelTintPill(c, tk, vercelCyan, nil, a.T("ctx.front"), false).Clicked() {
 			a.ReorderSelection(graph.ZOrderFront)
 		}
-		if action.Button(c, a.T("ctx.back"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+		if vercelTintPill(c, tk, vercelIndigo, nil, a.T("ctx.back"), false).Clicked() {
 			a.ReorderSelection(graph.ZOrderBack)
 		}
 		lockLbl := a.T("ctx.lock")
 		if lockedAny {
 			lockLbl = a.T("ctx.unlock")
 		}
-		if action.Button(c, lockLbl, action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+		if vercelTintPill(c, tk, vercelAmber, nil, lockLbl, lockedAny).Clicked() {
 			a.ToggleLockSelection()
 		}
-		if action.Button(c, a.T("ctx.delete"), action.ButtonProps{Variant: action.Text, Size: theme.Small}).TextColor(tk.Error).Clicked() {
+		if vercelTintPill(c, tk, vercelPink, nil, a.T("ctx.delete"), false).Clicked() {
 			a.DeleteSelection()
 		}
+	})
+}
+
+func (a *App) shapeModeBanner(c *ui.Context, tk *theme.Tokens) {
+	cw := a.CanvasRect.W
+	if cw <= 0 {
+		cw = 760
+	}
+	shapeName := a.T("shape." + string(a.Shape))
+	if shapeName == "shape."+string(a.Shape) {
+		shapeName = string(a.Shape)
+	}
+	accent := shapeCategoryColor(a.Shape)
+	x := max(float32(16), cw/2-170)
+	ui.Row(c.Key("shape-mode-banner")).Absolute().Left(x).Top(14).Padding(6, 14).Radius(99).
+		Gap(8).AlignItems(ui.Center).Background(tk.BgElevated).
+		BorderWidth(1.5).BorderColor(accent.Alpha(0.7)).Children(func() {
+		ui.Box(c).Size(8, 8).Radius(4).Background(accent)
+		ui.Text(c, a.T("tb.placeShape", shapeName)).FontSize(12).FontWeight(600).TextColor(accent)
+	})
+}
+
+func (a *App) emptyHeroOverlay(c *ui.Context, tk *theme.Tokens) {
+	if a.CanvasRect.W > 0 && (a.CanvasRect.W < 420 || a.CanvasRect.H < 320) {
+		return
+	}
+	cw := a.CanvasRect.W
+	if cw <= 0 {
+		cw = 760
+	}
+	w := min(float32(560), cw-48)
+	left := (cw - w) / 2
+	// Positioned cleanly in lower band so center-canvas mouse/drop tests remain unobstructed.
+	card := ui.Column(c.Key("hero-empty-card")).Absolute().Left(left).Bottom(44).Width(w).
+		Radius(12).Background(tk.BgElevated.Alpha(0.95)).
+		BorderWidth(1).BorderColor(tk.BorderSecondary).Clip()
+	card.Children(func() {
+		vercelSpectrumBar(c, 3)
+		ui.Column(c).Padding(14, 16).Gap(10).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+				ui.Box(c).Size(10, 10).Radius(5).LinearGradient(ui.LinearGradient{From: vercelPink, To: vercelBlue, Angle: 90, Oklab: true})
+				ui.Text(c, a.T("hero.title")).FontSize(14).FontWeight(700).TextColor(tk.Text)
+			})
+			ui.Text(c, a.T("hero.subtitle")).FontSize(11).LineHeight(1.45).TextColor(tk.TextSecondary)
+
+			ui.Row(c).Gap(6).Wrap().Children(func() {
+				if vercelGradientButton(c, nil, a.T("tpl.arch"), true).Clicked() {
+					a.ApplyBuiltinTemplate("arch")
+				}
+				if vercelTintPill(c, tk, vercelEmerald, nil, a.T("tpl.flow"), false).Clicked() {
+					a.ApplyBuiltinTemplate("flow")
+				}
+				if vercelTintPill(c, tk, vercelViolet, nil, a.T("hero.openMermaid"), false).Clicked() {
+					a.MermaidOpen = true
+				}
+				if vercelTintPill(c, tk, vercelCyan, nil, a.T("hero.openMedia"), false).Clicked() {
+					a.ImportMediaFromDialog()
+				}
+				if vercelTintPill(c, tk, vercelPink, nil, a.T("hero.shortcutsBtn"), false).Clicked() {
+					a.ShortcutsOpen = true
+				}
+			})
+
+			mod := platformMod()
+			ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
+				kbdBadge(c, tk, "V "+a.T("keys.select"), vercelBlue)
+				kbdBadge(c, tk, "C "+a.T("keys.connect"), vercelViolet)
+				kbdBadge(c, tk, "R/O/D", vercelPink)
+				kbdBadge(c, tk, mod+"+K", vercelCyan)
+				kbdBadge(c, tk, mod+"+Shift+F", vercelEmerald)
+				kbdBadge(c, tk, "? "+a.T("keys.shortcutsModal"), vercelAmber)
+			})
+		})
 	})
 }
 
@@ -674,9 +755,9 @@ func (a *App) minimapOverlay(c *ui.Context, tk *theme.Tokens) {
 		return
 	}
 	mm := ui.Box(c.Key("minimap")).Absolute().Right(12).Bottom(12).
-		Width(164).Height(104).Radius(8).
-		Background(tk.BgElevated.Alpha(0.92)).
-		BorderWidth(1).BorderColor(tk.BorderSecondary)
+		Width(164).Height(104).Radius(8).Clip().
+		Background(tk.BgElevated.Alpha(0.94)).
+		BorderWidth(1).BorderColor(vercelBlue.Alpha(0.32))
 	mm.HandleInput(func(ev ui.InputEvent) bool {
 		if a.CanvasRect.W <= 0 {
 			return false
@@ -709,41 +790,43 @@ func (a *App) minimapOverlay(c *ui.Context, tk *theme.Tokens) {
 		return false
 	})
 	mm.Draw(func(p *ui.Painter, r ui.Rect) {
-		box, ok := a.Page().Bounds()
-		if !ok {
-			return
-		}
-		box = box.Expand(32)
-		s := math.Min(float64(r.W-12)/box.W, float64(r.H-12)/box.H)
-		ox := float64(r.X) + (float64(r.W)-box.W*s)/2 - box.X*s
-		oy := float64(r.Y) + (float64(r.H)-box.H*s)/2 - box.Y*s
-		for _, n := range a.Page().Nodes {
-			nr := ui.Rect{
-				X: float32(ox + n.X*s),
-				Y: float32(oy + n.Y*s),
-				W: max(3, float32(n.W*s)),
-				H: max(2, float32(n.H*s)),
+		p.Clip(r, 8, func() {
+			box, ok := a.Page().Bounds()
+			if !ok {
+				return
 			}
-			col := tk.TextQuaternary.Alpha(0.55)
-			if a.SelectedNodes[n.ID] {
-				col = tk.Primary
+			box = box.Expand(32)
+			s := math.Min(float64(r.W-12)/box.W, float64(r.H-12)/box.H)
+			ox := float64(r.X) + (float64(r.W)-box.W*s)/2 - box.X*s
+			oy := float64(r.Y) + (float64(r.H)-box.H*s)/2 - box.Y*s
+			for _, n := range a.Page().Nodes {
+				nr := ui.Rect{
+					X: float32(ox + n.X*s),
+					Y: float32(oy + n.Y*s),
+					W: max(3, float32(n.W*s)),
+					H: max(2, float32(n.H*s)),
+				}
+				col := tk.TextQuaternary.Alpha(0.55)
+				if a.SelectedNodes[n.ID] {
+					col = vercelBlue
+				}
+				p.Fill(nr, col, 1)
 			}
-			p.Fill(nr, col, 1)
-		}
-		// Viewport box
-		if a.CanvasRect.W > 0 {
-			vx := -a.Cam.X
-			vy := -a.Cam.Y
-			vw := float64(a.CanvasRect.W) / a.Cam.Zoom
-			vh := float64(a.CanvasRect.H) / a.Cam.Zoom
-			vr := ui.Rect{
-				X: float32(ox + vx*s),
-				Y: float32(oy + vy*s),
-				W: float32(vw * s),
-				H: float32(vh * s),
+			// Viewport box
+			if a.CanvasRect.W > 0 {
+				vx := -a.Cam.X
+				vy := -a.Cam.Y
+				vw := float64(a.CanvasRect.W) / a.Cam.Zoom
+				vh := float64(a.CanvasRect.H) / a.Cam.Zoom
+				vr := ui.Rect{
+					X: float32(ox + vx*s),
+					Y: float32(oy + vy*s),
+					W: float32(vw * s),
+					H: float32(vh * s),
+				}
+				p.Stroke(vr, vercelBlue, 4, 1.4)
 			}
-			p.Stroke(vr, tk.Primary, 2, 1.2)
-		}
+		})
 	})
 }
 

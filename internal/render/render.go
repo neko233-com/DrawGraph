@@ -121,37 +121,37 @@ type Palette struct {
 	Shadow        ui.Color
 }
 
-// PaletteFor returns light or dark canvas colors.
+// PaletteFor returns light or dark canvas colors with Vercel Geist contrast & colorful accents.
 func PaletteFor(dark bool) Palette {
 	if dark {
 		return Palette{
-			CanvasBG:      ui.Hex("#0B1120"),
-			GridDot:       ui.RGBA(148, 163, 184, 0.16),
-			GridMajor:     ui.RGBA(148, 163, 184, 0.30),
-			NodeFill:      ui.Hex("#1E293B"),
-			NodeStroke:    ui.Hex("#475569"),
-			NodeText:      ui.Hex("#F8FAFC"),
-			ContainerFill: ui.RGBA(30, 41, 59, 0.45),
-			EdgeStroke:    ui.Hex("#94A3B8"),
-			EdgeLabelBG:   ui.Hex("#0F172A"),
-			EdgeLabelText: ui.Hex("#E2E8F0"),
-			Accent:        ui.Hex("#3B82F6"),
-			Shadow:        ui.RGBA(0, 0, 0, 0.38),
+			CanvasBG:      ui.Hex("#07080D"),
+			GridDot:       ui.RGBA(148, 163, 184, 0.14),
+			GridMajor:     ui.RGBA(56, 189, 248, 0.24),
+			NodeFill:      ui.Hex("#11131C"),
+			NodeStroke:    ui.Hex("#3B82F6"),
+			NodeText:      ui.Hex("#FAFAFA"),
+			ContainerFill: ui.RGBA(30, 41, 59, 0.42),
+			EdgeStroke:    ui.Hex("#38BDF8"),
+			EdgeLabelBG:   ui.Hex("#0D1117"),
+			EdgeLabelText: ui.Hex("#F4F4F5"),
+			Accent:        ui.Hex("#0070F3"),
+			Shadow:        ui.RGBA(0, 0, 0, 0.48),
 		}
 	}
 	return Palette{
-		CanvasBG:      ui.Hex("#F8FAFC"),
-		GridDot:       ui.RGBA(100, 116, 139, 0.18),
-		GridMajor:     ui.RGBA(100, 116, 139, 0.34),
+		CanvasBG:      ui.Hex("#FCFCFD"),
+		GridDot:       ui.RGBA(100, 116, 139, 0.16),
+		GridMajor:     ui.RGBA(0, 112, 243, 0.20),
 		NodeFill:      ui.Hex("#FFFFFF"),
 		NodeStroke:    ui.Hex("#CBD5E1"),
-		NodeText:      ui.Hex("#0F172A"),
-		ContainerFill: ui.RGBA(241, 245, 249, 0.72),
-		EdgeStroke:    ui.Hex("#64748B"),
+		NodeText:      ui.Hex("#09090B"),
+		ContainerFill: ui.RGBA(239, 246, 255, 0.55),
+		EdgeStroke:    ui.Hex("#0070F3"),
 		EdgeLabelBG:   ui.Hex("#FFFFFF"),
-		EdgeLabelText: ui.Hex("#334155"),
-		Accent:        ui.Hex("#2563EB"),
-		Shadow:        ui.RGBA(15, 23, 42, 0.10),
+		EdgeLabelText: ui.Hex("#09090B"),
+		Accent:        ui.Hex("#0070F3"),
+		Shadow:        ui.RGBA(0, 112, 243, 0.10),
 	}
 }
 
@@ -179,10 +179,6 @@ func PaintSceneWithStats(p *ui.Painter, r ui.Rect, st SceneState) PaintStats {
 	}
 	p.Fill(r, bg, 0)
 
-	if st.ShowGrid && !st.Export {
-		paintGrid(p, r, st, pal)
-	}
-
 	margin := 80.0 / math.Max(st.Cam.Zoom, 0.05)
 	viewWorld := geo.Box{
 		X: -st.Cam.X - margin,
@@ -208,24 +204,30 @@ func PaintSceneWithStats(p *ui.Painter, r ui.Rect, st SceneState) PaintStats {
 		stats.LODMode = "high"
 	}
 
-	// Render containers and swimlanes first, then visible edges, then regular visible nodes.
-	for _, n := range visibleNodes {
-		if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
-			paintNode(p, r, st, pal, n)
+	p.Clip(r, 0, func() {
+		if st.ShowGrid && !st.Export {
+			paintGrid(p, r, st, pal)
 		}
-	}
-	for _, ve := range visibleEdges {
-		paintVisibleEdge(p, r, st, pal, ve)
-	}
-	for _, n := range visibleNodes {
-		if n.Kind != graph.KindContainer && n.Kind != graph.KindSwimlane {
-			paintNode(p, r, st, pal, n)
-		}
-	}
 
-	if !st.Export {
-		paintOverlays(p, r, st, pal, idx)
-	}
+		// Render containers and swimlanes first, then visible edges, then regular visible nodes.
+		for _, n := range visibleNodes {
+			if n.Kind == graph.KindContainer || n.Kind == graph.KindSwimlane {
+				paintNode(p, r, st, pal, n)
+			}
+		}
+		for _, ve := range visibleEdges {
+			paintVisibleEdge(p, r, st, pal, ve)
+		}
+		for _, n := range visibleNodes {
+			if n.Kind != graph.KindContainer && n.Kind != graph.KindSwimlane {
+				paintNode(p, r, st, pal, n)
+			}
+		}
+
+		if !st.Export {
+			paintOverlays(p, r, st, pal, idx)
+		}
+	})
 	return stats
 }
 
@@ -281,12 +283,11 @@ func paintGrid(p *ui.Painter, r ui.Rect, st SceneState, pal Palette) {
 			}
 		}
 	}
-	// Draw subtle world origin (0,0) crosshair when visible inside viewport.
+	// Draw colorful Vercel origin (0,0) crosshair when visible inside viewport.
 	ox, oy := st.Cam.WorldToScreen(r, geo.V(0, 0))
 	if ox >= r.X-20 && ox <= r.X+r.W+20 && oy >= r.Y-20 && oy <= r.Y+r.H+20 {
-		axisCol := pal.Accent.Alpha(0.28)
-		p.Line(ox-12, oy, ox+12, oy, 1.2, axisCol)
-		p.Line(ox, oy-12, ox, oy+12, 1.2, axisCol)
+		p.Line(ox-14, oy, ox+14, oy, 1.4, ui.Hex("#FF0080").Alpha(0.45))
+		p.Line(ox, oy-14, ox, oy+14, 1.4, ui.Hex("#0070F3").Alpha(0.45))
 	}
 }
 

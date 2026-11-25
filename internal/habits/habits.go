@@ -27,9 +27,26 @@ type Preset struct {
 	AccentStops []string           `json:"accentStops"`
 }
 
-// BuiltinPresets returns curated visual presets inspired by draw.io and Lobe UI.
+// BuiltinPresets returns curated visual presets inspired by Vercel Geist, draw.io, and Lobe UI.
 func BuiltinPresets() []Preset {
 	return []Preset{
+		{
+			ID:          "vercel-color",
+			Name:        "Vercel Spectrum",
+			Description: "Crisp Vercel Geist cards with semantic electric blue, cyan, violet, emerald, and pink accents.",
+			Routing:     graph.RouteOrthogonal,
+			LightNode: graph.NodeStyle{
+				Fill: "#EFF6FF", Stroke: "#0070F3", StrokeWidth: 1.6, Radius: 10,
+				FontSize: 13, TextColor: "#09090B", Shadow: true, Opacity: 1,
+			},
+			DarkNode: graph.NodeStyle{
+				Fill: "#0F172A", Stroke: "#3B82F6", StrokeWidth: 1.6, Radius: 10,
+				FontSize: 13, TextColor: "#FAFAFA", Shadow: false, Opacity: 1,
+			},
+			LightEdge:   graph.EdgeStyle{Stroke: "#0070F3", StrokeWidth: 1.75, FontSize: 12, TextColor: "#1E293B", Opacity: 1},
+			DarkEdge:    graph.EdgeStyle{Stroke: "#38BDF8", StrokeWidth: 1.75, FontSize: 12, TextColor: "#F4F4F5", Opacity: 1},
+			AccentStops: []string{"#EFF6FF", "#ECFEFF", "#F5F3FF", "#ECFDF5", "#FDF2F8", "#FEF3C7"},
+		},
 		{
 			ID:          "lobe-clean",
 			Name:        "Lobe Clean",
@@ -214,14 +231,14 @@ func DefaultProfile() *Profile {
 		AutoRemember:        true,
 		Language:            "auto",
 		ThemeMode:           "auto",
-		StylePreset:         "lobe-clean",
+		StylePreset:         "vercel-color",
 		DefaultNodeKind:     graph.KindRounded,
-		DefaultFill:         "#FFFFFF",
-		DefaultStroke:       "#CBD5E1",
-		DefaultStrokeWidth:  1.5,
+		DefaultFill:         "#EFF6FF",
+		DefaultStroke:       "#0070F3",
+		DefaultStrokeWidth:  1.6,
 		DefaultRadius:       10,
 		DefaultFontSize:     13,
-		DefaultTextColor:    "#0F172A",
+		DefaultTextColor:    "#09090B",
 		DefaultShadow:       true,
 		DefaultRouting:      graph.RouteOrthogonal,
 		DefaultArrow:        graph.ArrowClassic,

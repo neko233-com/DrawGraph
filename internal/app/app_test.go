@@ -407,7 +407,74 @@ func TestWorkbenchMultiLanguageCommandPaletteMermaidAndPowerFeatures(t *testing.
 	if !tt.HasText("一键排版") || !tt.HasText("图标插件") || !tt.HasText("用户习惯") {
 		t.Fatalf("expected toolbar to translate immediately to zh-CN")
 	}
+
+	// 6. Test Keyboard Shortcuts Modal (? / Ctrl+/) and Alt+4 quick radial layout hotkey!
+	tt.Key(ui.Cmd, ui.KeySlash)
+	tt.Advance(200 * time.Millisecond)
+	if !a.ShortcutsOpen || !tt.HasText("键盘快捷键速查") {
+		t.Fatalf("expected Ctrl+/ to open localized Keyboard Shortcuts Modal")
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if a.ShortcutsOpen {
+		t.Fatalf("expected Esc to close Shortcuts Modal")
+	}
+	tt.Key(ui.Alt, ui.Key4)
+	tt.Frame()
+	if a.LayoutStrategy != "radial" {
+		t.Fatalf("expected Alt+4 to switch to radial layout, got %s", a.LayoutStrategy)
+	}
 	if img := tt.Image(); img == nil || img.Bounds().Dx() < 800 {
-		t.Fatalf("unexpected rendered zh-CN UI image: %v", img)
+		t.Fatalf("unexpected rendered zh-CN Vercel UI image: %v", img)
+	}
+}
+
+func TestVercelSpectrumHeroBannerAndSemanticColors(t *testing.T) {
+	a, tt, _ := newTestWorkbench(t)
+
+	// 1. Fresh empty canvas displays the Vercel Spectrum onboarding hero card & shortcuts hint.
+	if !tt.HasText("Vercel-Grade Infinite Diagram Canvas") || !tt.HasText("Cloud Arch") {
+		t.Fatalf("expected empty-canvas hero overlay with quick-start actions")
+	}
+
+	// 2. Pressing R displays the contextual shape placement pill banner without blocking canvas clicks.
+	tt.Key(0, ui.KeyR)
+	tt.Frame()
+	if !tt.HasText("Drop Rounded · Click canvas · Esc cancel") {
+		t.Fatalf("expected shapeModeBanner showing localized Rounded placement prompt")
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if a.Tool != app.ToolSelect || tt.HasText("Drop Rounded · Click canvas · Esc cancel") {
+		t.Fatalf("expected Esc to cancel shape placement banner and restore ToolSelect")
+	}
+
+	// 3. Semantic Vercel Spectrum formatting assigns crisp category fills to DB, Decision, and Cloud nodes.
+	nDB := &graph.Node{ID: "db", Kind: graph.KindCylinder, Label: "Orders DB", X: 80, Y: 80, W: 140, H: 68}
+	nGate := &graph.Node{ID: "gate", Kind: graph.KindDiamond, Label: "Auth Check", X: 300, Y: 80, W: 140, H: 68}
+	nCloud := &graph.Node{ID: "cdn", Kind: graph.KindCloud, Label: "Edge CDN", X: 520, Y: 80, W: 140, H: 68}
+	a.Page().AddNode(nDB)
+	a.Page().AddNode(nGate)
+	a.Page().AddNode(nCloud)
+	a.Page().AddEdge(&graph.Edge{ID: "e1", SourceID: nCloud.ID, TargetID: nGate.ID, Label: "verify"})
+	a.Page().AddEdge(&graph.Edge{ID: "e2", SourceID: nGate.ID, TargetID: nDB.ID, Label: "query"})
+	a.FormatOneClick("LR")
+	tt.Frame()
+
+	if tt.HasText("Vercel-Grade Infinite Diagram Canvas") {
+		t.Fatalf("expected empty-canvas hero overlay to hide once nodes are present")
+	}
+	if nDB.Style.Fill != "#ECFDF5" || nDB.Style.Stroke != "#10B981" {
+		t.Fatalf("expected semantic Emerald DB style, got fill=%s stroke=%s", nDB.Style.Fill, nDB.Style.Stroke)
+	}
+	if nGate.Style.Fill != "#FEF3C7" || nGate.Style.Stroke != "#F59E0B" {
+		t.Fatalf("expected semantic Amber Decision style, got fill=%s stroke=%s", nGate.Style.Fill, nGate.Style.Stroke)
+	}
+	if nCloud.Style.Fill != "#ECFEFF" || nCloud.Style.Stroke != "#06B6D4" {
+		t.Fatalf("expected semantic Cyan Cloud style, got fill=%s stroke=%s", nCloud.Style.Fill, nCloud.Style.Stroke)
+	}
+
+	if img := tt.Image(); img == nil || img.Bounds().Dx() < 800 {
+		t.Fatalf("unexpected rendered Vercel Spectrum image: %v", img)
 	}
 }
